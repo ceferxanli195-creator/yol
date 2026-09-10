@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { UserRecord, CustomerRecord, DriverRecord, AuditLogRecord, UserPermissions } from './types';
+import { UserRecord, CustomerRecord, DriverRecord, AuditLogRecord, UserPermissions, DeliveryRecord, NotificationRecord, DeliveryStatus, UserRole } from './types';
 import {
   syncCustomerToFirestore,
   deleteCustomerFromFirestore,
@@ -10,6 +10,10 @@ import {
   syncDriverToFirestore,
   deleteDriverFromFirestore,
   syncLogToFirestore,
+  syncDeliveryToFirestore,
+  deleteDeliveryFromFirestore,
+  syncNotificationToFirestore,
+  deleteNotificationFromFirestore,
   loadInitialDataFromFirestore,
 } from './firestore';
 
@@ -23,6 +27,8 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CUSTOMERS_FILE = path.join(DATA_DIR, 'customers.json');
 const DRIVERS_FILE = path.join(DATA_DIR, 'drivers.json');
 const LOGS_FILE = path.join(DATA_DIR, 'logs.json');
+const DELIVERIES_FILE = path.join(DATA_DIR, 'deliveries.json');
+const NOTIFICATIONS_FILE = path.join(DATA_DIR, 'notifications.json');
 
 function readJsonFile<T>(filePath: string, defaultValue: T): T {
   try {
@@ -85,6 +91,8 @@ class Database {
   private customers: CustomerRecord[] = [];
   private drivers: DriverRecord[] = [];
   private logs: AuditLogRecord[] = [];
+  private deliveries: DeliveryRecord[] = [];
+  private notifications: NotificationRecord[] = [];
 
   constructor() {
     this.reload();
@@ -119,6 +127,22 @@ class Database {
         this.drivers = Array.from(idMap.values());
         this.saveDrivers();
       }
+      if (cloudData.deliveries && cloudData.deliveries.length > 0) {
+        const idMap = new Map(this.deliveries.map(d => [d.id, d]));
+        for (const d of cloudData.deliveries) {
+          idMap.set(d.id, d);
+        }
+        this.deliveries = Array.from(idMap.values());
+        this.saveDeliveries();
+      }
+      if (cloudData.notifications && cloudData.notifications.length > 0) {
+        const idMap = new Map(this.notifications.map(n => [n.id, n]));
+        for (const n of cloudData.notifications) {
+          idMap.set(n.id, n);
+        }
+        this.notifications = Array.from(idMap.values());
+        this.saveNotifications();
+      }
       for (const u of this.users) {
         syncUserToFirestore(u);
       }
@@ -127,6 +151,12 @@ class Database {
       }
       for (const d of this.drivers) {
         syncDriverToFirestore(d);
+      }
+      for (const del of this.deliveries) {
+        syncDeliveryToFirestore(del);
+      }
+      for (const notif of this.notifications) {
+        syncNotificationToFirestore(notif);
       }
     } catch (err) {
       console.warn('Firestore initial sync notice:', err);
@@ -138,6 +168,8 @@ class Database {
     this.customers = readJsonFile<CustomerRecord[]>(CUSTOMERS_FILE, []);
     this.drivers = readJsonFile<DriverRecord[]>(DRIVERS_FILE, []);
     this.logs = readJsonFile<AuditLogRecord[]>(LOGS_FILE, []);
+    this.deliveries = readJsonFile<DeliveryRecord[]>(DELIVERIES_FILE, []);
+    this.notifications = readJsonFile<NotificationRecord[]>(NOTIFICATIONS_FILE, []);
   }
 
   private saveUsers() {
@@ -154,6 +186,14 @@ class Database {
 
   private saveLogs() {
     writeJsonFile(LOGS_FILE, this.logs);
+  }
+
+  private saveDeliveries() {
+    writeJsonFile(DELIVERIES_FILE, this.deliveries);
+  }
+
+  private saveNotifications() {
+    writeJsonFile(NOTIFICATIONS_FILE, this.notifications);
   }
 
   private ensureInitialAdmin() {
@@ -194,6 +234,7 @@ class Database {
     loginId: string;
     password: string;
     name: string;
+    phone?: string;
     role: 'ADMIN' | 'USER' | 'DRIVER';
     status: 'active' | 'inactive';
     permissions?: Partial<UserPermissions>;
@@ -208,6 +249,7 @@ class Database {
       loginId: cleanLoginId,
       passwordHash: hashPassword(userData.password),
       name: userData.name.trim(),
+      phone: userData.phone?.trim() || '',
       role: userData.role,
       status: userData.status,
       permissions: {
@@ -220,11 +262,30 @@ class Database {
     this.users.push(newUser);
     this.saveUsers();
     syncUserToFirestore(newUser);
+
+    // If created as DRIVER, also add to drivers list so they appear in driver lookups
+    if (newUser.role === 'DRIVER' && !this.getDriverByLoginId(cleanLoginId)) {
+      const driver: DriverRecord = {
+        id: newUser.id,
+        loginId: cleanLoginId,
+        passwordHash: newUser.passwordHash,
+        name: newUser.name,
+        phone: newUser.phone || '',
+        status: newUser.status,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.drivers.push(driver);
+      this.saveDrivers();
+      syncDriverToFirestore(driver);
+    }
+
     return newUser;
   }
 
   public updateUser(id: string, updates: {
     name?: string;
+    phone?: string;
     password?: string;
     role?: 'ADMIN' | 'USER' | 'DRIVER';
     status?: 'active' | 'inactive';
@@ -236,6 +297,7 @@ class Database {
     if (!user) throw new Error('İstifadəçi tapılmadı.');
 
     if (updates.name !== undefined) user.name = updates.name.trim();
+    if (updates.phone !== undefined) user.phone = updates.phone.trim();
     if (updates.password) user.passwordHash = hashPassword(updates.password);
     if (updates.role !== undefined) user.role = updates.role;
     if (updates.status !== undefined) user.status = updates.status;
@@ -246,6 +308,19 @@ class Database {
 
     this.saveUsers();
     syncUserToFirestore(user);
+
+    // Sync corresponding driver if role is DRIVER
+    const driver = this.getDriverById(id);
+    if (driver) {
+      if (updates.name !== undefined) driver.name = updates.name.trim();
+      if (updates.phone !== undefined) driver.phone = updates.phone.trim();
+      if (updates.status !== undefined) driver.status = updates.status;
+      if (updates.password) driver.passwordHash = hashPassword(updates.password);
+      driver.updatedAt = new Date().toISOString();
+      this.saveDrivers();
+      syncDriverToFirestore(driver);
+    }
+
     return user;
   }
 
@@ -282,6 +357,8 @@ class Database {
     longitude: number;
     accuracy: number;
     photoUrl?: string;
+    assignedDriverId?: string | null;
+    assignedDriverName?: string | null;
   }): CustomerRecord {
     const now = new Date().toISOString();
     const fullName = `${data.firstName.trim()} ${data.lastName.trim()}`.trim();
@@ -305,6 +382,10 @@ class Database {
       isDeleted: false,
       deletedAt: null,
       deletedBy: null,
+      assignedDriverId: data.assignedDriverId || null,
+      assignedDriverName: data.assignedDriverName || null,
+      assignedAt: data.assignedDriverId ? now : null,
+      assignedBy: data.assignedDriverId ? data.createdBy : null,
       createdAt: now,
       updatedAt: now,
     };
@@ -334,10 +415,40 @@ class Database {
     if (updates.photoUrl !== undefined) customer.photoUrl = updates.photoUrl;
     if (updates.ownerId !== undefined) customer.ownerId = updates.ownerId;
     if (updates.status !== undefined) customer.status = updates.status;
+    if (updates.assignedDriverId !== undefined) customer.assignedDriverId = updates.assignedDriverId;
+    if (updates.assignedDriverName !== undefined) customer.assignedDriverName = updates.assignedDriverName;
+    if (updates.assignedAt !== undefined) customer.assignedAt = updates.assignedAt;
+    if (updates.assignedBy !== undefined) customer.assignedBy = updates.assignedBy;
 
     customer.updatedBy = updates.updatedBy;
     customer.updatedAt = new Date().toISOString();
 
+    this.saveCustomers();
+    syncCustomerToFirestore(customer);
+    return customer;
+  }
+
+  public assignDriver(customerId: string, driverId: string | null, assignedBy: string): CustomerRecord {
+    const customer = this.getCustomerById(customerId);
+    if (!customer) throw new Error('Müştəri tapılmadı.');
+
+    const now = new Date().toISOString();
+    if (driverId) {
+      const driver = this.getDriverById(driverId);
+      if (!driver) throw new Error('Seçilmiş sürücü tapılmadı.');
+      customer.assignedDriverId = driver.id;
+      customer.assignedDriverName = driver.name;
+      customer.assignedAt = now;
+      customer.assignedBy = assignedBy;
+    } else {
+      customer.assignedDriverId = null;
+      customer.assignedDriverName = null;
+      customer.assignedAt = null;
+      customer.assignedBy = null;
+    }
+
+    customer.updatedBy = assignedBy;
+    customer.updatedAt = now;
     this.saveCustomers();
     syncCustomerToFirestore(customer);
     return customer;
@@ -378,15 +489,63 @@ class Database {
 
   // --- Drivers ---
   public getDrivers(): DriverRecord[] {
-    return this.drivers;
+    const list = [...this.drivers];
+    const existingIds = new Set(list.map(d => d.id));
+    const existingLogins = new Set(list.map(d => d.loginId.toLowerCase()));
+    for (const u of this.users) {
+      if (u.role === 'DRIVER' && !existingIds.has(u.id) && !existingLogins.has(u.loginId.toLowerCase())) {
+        list.push({
+          id: u.id,
+          loginId: u.loginId,
+          passwordHash: u.passwordHash,
+          name: u.name,
+          phone: u.phone || '',
+          status: u.status,
+          createdAt: u.createdAt,
+          updatedAt: u.updatedAt,
+        });
+      }
+    }
+    return list;
   }
 
   public getDriverById(id: string): DriverRecord | undefined {
-    return this.drivers.find(d => d.id === id);
+    const d = this.drivers.find(d => d.id === id);
+    if (d) return d;
+    const u = this.users.find(u => u.id === id && u.role === 'DRIVER');
+    if (u) {
+      return {
+        id: u.id,
+        loginId: u.loginId,
+        passwordHash: u.passwordHash,
+        name: u.name,
+        phone: u.phone || '',
+        status: u.status,
+        createdAt: u.createdAt,
+        updatedAt: u.updatedAt,
+      };
+    }
+    return undefined;
   }
 
   public getDriverByLoginId(loginId: string): DriverRecord | undefined {
-    return this.drivers.find(d => d.loginId.toLowerCase() === loginId.toLowerCase().trim());
+    const clean = loginId.toLowerCase().trim();
+    const d = this.drivers.find(d => d.loginId.toLowerCase() === clean);
+    if (d) return d;
+    const u = this.users.find(u => u.loginId.toLowerCase() === clean && u.role === 'DRIVER');
+    if (u) {
+      return {
+        id: u.id,
+        loginId: u.loginId,
+        passwordHash: u.passwordHash,
+        name: u.name,
+        phone: u.phone || '',
+        status: u.status,
+        createdAt: u.createdAt,
+        updatedAt: u.updatedAt,
+      };
+    }
+    return undefined;
   }
 
   public createDriver(data: {
@@ -443,9 +602,66 @@ class Database {
     deleteDriverFromFirestore(id);
   }
 
-  // --- Audit Logs ---
+  // --- Audit Logs & Business Operations ---
   public getLogs(): AuditLogRecord[] {
     return this.logs;
+  }
+
+  public getOperations(options: {
+    userRole: 'ADMIN' | 'USER' | 'DRIVER';
+    userId: string;
+    date?: string;
+    userFilter?: string;
+    customerFilter?: string;
+    driverFilter?: string;
+    actionType?: string;
+    search?: string;
+  }): AuditLogRecord[] {
+    // Strictly exclude authentication/session actions
+    let list = this.logs.filter(l => 
+      l.entityType !== 'AUTH' && 
+      !l.action.toUpperCase().includes('LOGIN') && 
+      !l.action.toUpperCase().includes('LOGOUT') &&
+      !l.action.toUpperCase().includes('SESSION')
+    );
+
+    // Scoping: USER sees only own actions, DRIVER sees actions relevant to themselves
+    if (options.userRole === 'USER') {
+      list = list.filter(l => l.userId === options.userId);
+    } else if (options.userRole === 'DRIVER') {
+      list = list.filter(l => l.driverId === options.userId || l.userId === options.userId);
+    }
+
+    if (options.date) {
+      list = list.filter(l => l.createdAt.startsWith(options.date!));
+    }
+    if (options.userFilter) {
+      const q = options.userFilter.toLowerCase();
+      list = list.filter(l => l.userId === options.userFilter || l.userName.toLowerCase().includes(q));
+    }
+    if (options.customerFilter) {
+      const q = options.customerFilter.toLowerCase();
+      list = list.filter(l => l.customerId === options.customerFilter || (l.customerName && l.customerName.toLowerCase().includes(q)));
+    }
+    if (options.driverFilter) {
+      const q = options.driverFilter.toLowerCase();
+      list = list.filter(l => l.driverId === options.driverFilter || (l.driverName && l.driverName.toLowerCase().includes(q)));
+    }
+    if (options.actionType) {
+      list = list.filter(l => l.actionType === options.actionType || l.action === options.actionType);
+    }
+    if (options.search) {
+      const q = options.search.toLowerCase().trim();
+      list = list.filter(l => 
+        l.details.toLowerCase().includes(q) ||
+        l.action.toLowerCase().includes(q) ||
+        (l.customerName && l.customerName.toLowerCase().includes(q)) ||
+        (l.driverName && l.driverName.toLowerCase().includes(q)) ||
+        l.userName.toLowerCase().includes(q)
+      );
+    }
+
+    return list;
   }
 
   public addLog(entry: {
@@ -453,10 +669,13 @@ class Database {
     userName: string;
     role: 'ADMIN' | 'USER' | 'DRIVER';
     action: string;
-    entityType: 'CUSTOMER' | 'USER' | 'DRIVER' | 'PERMISSION' | 'AUTH' | 'BACKUP' | 'LOG';
+    actionType?: string;
+    entityType: 'CUSTOMER' | 'USER' | 'DRIVER' | 'PERMISSION' | 'AUTH' | 'BACKUP' | 'LOG' | 'ASSIGNMENT' | 'DELIVERY';
     entityId?: string;
     customerId?: string;
     customerName?: string;
+    driverId?: string;
+    driverName?: string;
     details: string;
     oldData?: any;
     newData?: any;
@@ -487,6 +706,288 @@ class Database {
   public clearAllLogs(): void {
     this.logs = [];
     this.saveLogs();
+  }
+
+  // --- Deliveries ---
+  public getDeliveries(options?: {
+    driverId?: string;
+    customerId?: string;
+    ownerId?: string;
+    status?: DeliveryStatus;
+    date?: string;
+    search?: string;
+  }): DeliveryRecord[] {
+    let list = [...this.deliveries];
+
+    if (options?.driverId) {
+      list = list.filter(d => d.driverId === options.driverId);
+    }
+    if (options?.customerId) {
+      list = list.filter(d => d.customerId === options.customerId);
+    }
+    if (options?.ownerId) {
+      list = list.filter(d => d.ownerId === options.ownerId);
+    }
+    if (options?.status) {
+      list = list.filter(d => d.status === options.status);
+    }
+    if (options?.date) {
+      list = list.filter(d => {
+        const assignedDate = d.assignedAt?.substring(0, 10);
+        const deliveredDate = d.deliveredAt?.substring(0, 10);
+        return assignedDate === options.date || deliveredDate === options.date;
+      });
+    }
+    if (options?.search) {
+      const q = options.search.toLowerCase().trim();
+      list = list.filter(d =>
+        d.customerName.toLowerCase().includes(q) ||
+        d.customerAddress.toLowerCase().includes(q) ||
+        d.driverName.toLowerCase().includes(q) ||
+        d.ownerName.toLowerCase().includes(q) ||
+        (d.notes && d.notes.toLowerCase().includes(q))
+      );
+    }
+
+    list.sort((a, b) => new Date(b.assignedAt || b.createdAt).getTime() - new Date(a.assignedAt || a.createdAt).getTime());
+    return list;
+  }
+
+  public getDeliveryById(id: string): DeliveryRecord | undefined {
+    return this.deliveries.find(d => d.id === id);
+  }
+
+  public createDelivery(params: {
+    customerId: string;
+    driverId: string;
+    assignedBy: string;
+    notes?: string;
+    status?: DeliveryStatus;
+  }): DeliveryRecord {
+    const customer = this.getCustomerById(params.customerId);
+    if (!customer) throw new Error('Müştəri tapılmadı.');
+
+    const driver = this.getDriverById(params.driverId);
+    if (!driver) throw new Error('Sürücü tapılmadı.');
+
+    const assigner = this.getUserById(params.assignedBy);
+    const owner = this.getUserById(customer.ownerId);
+
+    const now = new Date().toISOString();
+    const initialStatus = params.status || 'assigned';
+
+    const delivery: DeliveryRecord = {
+      id: 'del_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      customerId: customer.id,
+      customerName: customer.fullName,
+      customerPhone: customer.phone,
+      customerAddress: customer.address,
+      customerNotes: customer.notes || '',
+      customerLatitude: customer.latitude,
+      customerLongitude: customer.longitude,
+      ownerId: customer.ownerId,
+      ownerName: owner?.name || 'Məsul İstifadəçi',
+      driverId: driver.id,
+      driverName: driver.name,
+      assignedBy: params.assignedBy,
+      assignedByName: assigner?.name || 'Admin',
+      status: initialStatus,
+      notes: params.notes || '',
+      assignedAt: now,
+      deliveredAt: null,
+      deliveredBy: null,
+      deliveredByName: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.deliveries.unshift(delivery);
+    this.saveDeliveries();
+    syncDeliveryToFirestore(delivery);
+
+    // Update customer with assigned driver and current delivery status
+    customer.assignedDriverId = driver.id;
+    customer.assignedDriverName = driver.name;
+    customer.assignedAt = now;
+    customer.assignedBy = params.assignedBy;
+    customer.currentDeliveryStatus = initialStatus;
+    customer.updatedAt = now;
+    customer.updatedBy = params.assignedBy;
+    this.saveCustomers();
+    syncCustomerToFirestore(customer);
+
+    return delivery;
+  }
+
+  public startDelivery(id: string, actorId: string, actorName: string): DeliveryRecord {
+    const delivery = this.getDeliveryById(id);
+    if (!delivery) throw new Error('Çatdırılma tapılmadı.');
+
+    if (delivery.status === 'delivered') {
+      throw new Error('Bu çatdırılma artıq təhvil verilib.');
+    }
+
+    const now = new Date().toISOString();
+    delivery.status = 'in_transit';
+    delivery.updatedAt = now;
+    this.saveDeliveries();
+    syncDeliveryToFirestore(delivery);
+
+    const customer = this.getCustomerById(delivery.customerId);
+    if (customer) {
+      customer.currentDeliveryStatus = 'in_transit';
+      customer.updatedAt = now;
+      this.saveCustomers();
+      syncCustomerToFirestore(customer);
+    }
+
+    return delivery;
+  }
+
+  public deliverDelivery(id: string, deliveredBy: string, deliveredByName: string, note?: string): DeliveryRecord {
+    const delivery = this.getDeliveryById(id);
+    if (!delivery) throw new Error('Çatdırılma tapılmadı.');
+
+    // Prevent double delivery! (Requirement 11)
+    if (delivery.status === 'delivered') {
+      throw new Error('Bu çatdırılma artıq təhvil verilib.');
+    }
+
+    const now = new Date().toISOString();
+    delivery.status = 'delivered';
+    delivery.deliveredAt = now;
+    delivery.deliveredBy = deliveredBy;
+    delivery.deliveredByName = deliveredByName;
+    delivery.updatedAt = now;
+    if (note) {
+      delivery.notes = delivery.notes ? `${delivery.notes} | ${note}` : note;
+    }
+
+    this.saveDeliveries();
+    syncDeliveryToFirestore(delivery);
+
+    // Update customer status
+    const customer = this.getCustomerById(delivery.customerId);
+    if (customer) {
+      customer.currentDeliveryStatus = 'delivered';
+      customer.updatedAt = now;
+      this.saveCustomers();
+      syncCustomerToFirestore(customer);
+    }
+
+    // Auto-create notification for the responsible User (Requirement 7)
+    if (delivery.ownerId) {
+      this.createNotification({
+        userId: delivery.ownerId,
+        title: 'Mal təhvil verildi',
+        message: `🚚 ${deliveredByName} ${delivery.customerName} müştərisinin malını təhvil verdi.`,
+        type: 'delivery_delivered',
+        deliveryId: delivery.id,
+        customerId: delivery.customerId,
+        customerName: delivery.customerName,
+        driverId: delivery.driverId,
+        driverName: delivery.driverName,
+        status: 'Təhvil verildi',
+        deliveredAt: now,
+      });
+    }
+
+    return delivery;
+  }
+
+  public getDriverLastDelivery(driverId: string): DeliveryRecord | undefined {
+    const driverDeliveries = this.deliveries
+      .filter(d => d.driverId === driverId)
+      .sort((a, b) => new Date(b.deliveredAt || b.assignedAt || b.createdAt).getTime() - new Date(a.deliveredAt || a.assignedAt || a.createdAt).getTime());
+
+    const delivered = driverDeliveries.find(d => d.status === 'delivered');
+    return delivered || driverDeliveries[0];
+  }
+
+  public getDriverStats(driverId: string) {
+    const list = this.deliveries.filter(d => d.driverId === driverId);
+    const today = new Date().toISOString().substring(0, 10);
+
+    const pending = list.filter(d => d.status === 'assigned' || d.status === 'in_transit').length;
+    const delivered = list.filter(d => d.status === 'delivered').length;
+    const todayAssigned = list.filter(d => d.assignedAt?.substring(0, 10) === today).length;
+    const todayDelivered = list.filter(d => d.deliveredAt?.substring(0, 10) === today).length;
+    const lastDelivery = this.getDriverLastDelivery(driverId);
+
+    return {
+      totalAssigned: list.length,
+      pending,
+      delivered,
+      todayAssigned,
+      todayDelivered,
+      lastDelivery: lastDelivery || null,
+    };
+  }
+
+  // --- Notifications ---
+  public getNotifications(userId: string): NotificationRecord[] {
+    return this.notifications
+      .filter(n => n.userId === userId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  public getUnreadNotificationCount(userId: string): number {
+    return this.notifications.filter(n => n.userId === userId && !n.isRead).length;
+  }
+
+  public createNotification(params: {
+    userId: string;
+    title: string;
+    message: string;
+    type: 'delivery_delivered' | 'delivery_assigned' | 'system';
+    deliveryId?: string;
+    customerId?: string;
+    customerName?: string;
+    driverId?: string;
+    driverName?: string;
+    status?: string;
+    deliveredAt?: string;
+  }): NotificationRecord {
+    const now = new Date().toISOString();
+    const record: NotificationRecord = {
+      id: 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      ...params,
+      isRead: false,
+      createdAt: now,
+    };
+    this.notifications.unshift(record);
+    if (this.notifications.length > 2000) {
+      this.notifications = this.notifications.slice(0, 2000);
+    }
+    this.saveNotifications();
+    syncNotificationToFirestore(record);
+    return record;
+  }
+
+  public markNotificationAsRead(id: string, userId: string): boolean {
+    const notif = this.notifications.find(n => n.id === id && n.userId === userId);
+    if (notif) {
+      notif.isRead = true;
+      this.saveNotifications();
+      syncNotificationToFirestore(notif);
+      return true;
+    }
+    return false;
+  }
+
+  public markAllNotificationsAsRead(userId: string): number {
+    let count = 0;
+    for (const notif of this.notifications) {
+      if (notif.userId === userId && !notif.isRead) {
+        notif.isRead = true;
+        count++;
+        syncNotificationToFirestore(notif);
+      }
+    }
+    if (count > 0) {
+      this.saveNotifications();
+    }
+    return count;
   }
 }
 

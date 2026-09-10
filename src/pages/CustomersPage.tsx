@@ -284,6 +284,9 @@ export const CustomersPage: React.FC = () => {
               customer={customer}
               onEdit={handleEdit}
               onDelete={handleDeletePrompt}
+              onUpdated={(updated) =>
+                setCustomers(prev => prev.map(c => (c.id === updated.id ? updated : c)))
+              }
             />
           ))}
         </div>

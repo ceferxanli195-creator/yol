@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, MapPin, Navigation, Upload, Camera, AlertTriangle, Check, User as UserIcon } from 'lucide-react';
-import { Customer, User } from '../types';
+import { X, MapPin, Navigation, Upload, Camera, AlertTriangle, Check, User as UserIcon, Truck } from 'lucide-react';
+import { Customer, User, Driver } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { GpsPickModal } from './GpsPickModal';
+import { api } from '../api';
 
 interface CustomerFormModalProps {
   isOpen: boolean;
@@ -32,6 +33,8 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   const [accuracy, setAccuracy] = useState<number>(0);
   const [photoUrl, setPhotoUrl] = useState<string>('');
   const [ownerId, setOwnerId] = useState<string>('');
+  const [assignedDriverId, setAssignedDriverId] = useState<string>('');
+  const [driversList, setDriversList] = useState<Driver[]>([]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +47,9 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
+
+    // Load available drivers
+    api.getDrivers().then(res => setDriversList(res.drivers)).catch(() => {});
 
     setError(null);
     setGpsAccuracyWarning(null);
@@ -60,6 +66,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
       setAccuracy(customerToEdit.accuracy || 0);
       setPhotoUrl(customerToEdit.photoUrl || '');
       setOwnerId(customerToEdit.ownerId || user?.id || '');
+      setAssignedDriverId(customerToEdit.assignedDriverId || '');
     } else {
       setFirstName('');
       setLastName('');
@@ -71,6 +78,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
       setAccuracy(0);
       setPhotoUrl('');
       setOwnerId(user?.id || '');
+      setAssignedDriverId('');
     }
   }, [isOpen, customerToEdit, user]);
 
@@ -173,6 +181,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
         longitude,
         accuracy,
         photoUrl,
+        assignedDriverId: assignedDriverId ? assignedDriverId : null,
       };
 
       if (isAdmin && ownerId) {
@@ -296,6 +305,26 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Driver Assignment */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
+                <Truck className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                <span>Təyin Edilmiş Sürücü</span>
+              </label>
+              <select
+                value={assignedDriverId}
+                onChange={(e) => setAssignedDriverId(e.target.value)}
+                className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+              >
+                <option value="">-- Sürücü təyin edilməyib --</option>
+                {driversList.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} ({d.phone}) {d.status === 'inactive' ? '[Deaktiv]' : ''}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Address */}

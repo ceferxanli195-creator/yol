@@ -4,6 +4,7 @@ import {
   PlusCircle,
   Shield,
   User as UserIcon,
+  Truck,
   CheckCircle,
   XCircle,
   Edit2,
@@ -242,11 +243,13 @@ export const UsersPage: React.FC<UsersPageProps> = () => {
                         className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full ${
                           u.role === 'ADMIN'
                             ? 'bg-purple-50 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300'
+                            : u.role === 'DRIVER'
+                            ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
                             : 'bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300'
                         }`}
                       >
-                        {u.role === 'ADMIN' ? <Shield className="w-3 h-3" /> : <UserIcon className="w-3 h-3" />}
-                        {u.role}
+                        {u.role === 'ADMIN' ? <Shield className="w-3 h-3" /> : u.role === 'DRIVER' ? <Truck className="w-3 h-3" /> : <UserIcon className="w-3 h-3" />}
+                        {u.role === 'DRIVER' ? 'SÜRÜCÜ' : u.role}
                       </span>
 
                       <span
@@ -401,6 +404,7 @@ export const UsersPage: React.FC<UsersPageProps> = () => {
                   >
                     <option value="USER">USER (İstifadəçi)</option>
                     <option value="ADMIN">ADMIN (Tam hüquqlu)</option>
+                    <option value="DRIVER">SÜRÜCÜ (Driver)</option>
                   </select>
                 </div>
 

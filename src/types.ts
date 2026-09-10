@@ -17,6 +17,7 @@ export interface User {
   id: string;
   loginId: string;
   name: string;
+  phone?: string;
   role: UserRole;
   status: UserStatus;
   permissions: UserPermissions;
@@ -49,8 +50,57 @@ export interface Customer {
   deletedAt?: string | null;
   deletedBy?: string | null;
   deletedByName?: string;
+  assignedDriverId?: string | null;
+  assignedDriverName?: string | null;
+  assignedAt?: string | null;
+  assignedBy?: string | null;
+  currentDeliveryStatus?: DeliveryStatus | 'none';
   createdAt: string;
   updatedAt: string;
+}
+
+export type DeliveryStatus = 'assigned' | 'in_transit' | 'delivered';
+
+export interface Delivery {
+  id: string;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  customerNotes?: string;
+  customerLatitude: number;
+  customerLongitude: number;
+  ownerId: string;
+  ownerName: string;
+  driverId: string;
+  driverName: string;
+  assignedBy: string;
+  assignedByName: string;
+  status: DeliveryStatus;
+  notes?: string;
+  assignedAt: string;
+  deliveredAt: string | null;
+  deliveredBy: string | null;
+  deliveredByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NotificationItem {
+  id: string;
+  userId: string;
+  title: string;
+  message: string;
+  type: 'delivery_delivered' | 'delivery_assigned' | 'system';
+  deliveryId?: string;
+  customerId?: string;
+  customerName?: string;
+  driverId?: string;
+  driverName?: string;
+  status?: string;
+  deliveredAt?: string;
+  isRead: boolean;
+  createdAt: string;
 }
 
 export interface Driver {
@@ -69,10 +119,13 @@ export interface AuditLog {
   userName: string;
   role: UserRole;
   action: string;
+  actionType?: string;
   entityType: string;
   entityId?: string;
   customerId?: string;
   customerName?: string;
+  driverId?: string;
+  driverName?: string;
   details: string;
   oldData?: any;
   newData?: any;
@@ -87,7 +140,29 @@ export interface DashboardStats {
   deletedCustomers?: number;
   totalDrivers?: number;
   activeDrivers?: number;
+  todayCustomers?: number;
+  todayDrivers?: number;
+  todayOperations?: number;
+  pendingAssignments?: number;
+  // Delivery stats
+  totalDeliveries?: number;
+  todayDelivered?: number;
+  inTransitDeliveries?: number;
+  deliveredDeliveries?: number;
+  pendingDeliveries?: number;
+  myCustomers?: number;
+  assignedDeliveries?: number;
+  todayAssignedDeliveries?: number;
+  driverAssignedCustomers?: number;
+  lastDelivery?: Delivery | null;
   recentCustomers?: Customer[];
+  recentDrivers?: Driver[];
+  recentAssignments?: Array<{
+    id: string;
+    customerName: string;
+    driverName: string;
+    assignedAt: string;
+  }>;
   recentActivities?: AuditLog[];
   userGroups?: Array<{
     userId: string;

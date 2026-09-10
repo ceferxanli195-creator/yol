@@ -18,6 +18,7 @@ export interface UserRecord {
   loginId: string;
   passwordHash: string;
   name: string;
+  phone?: string;
   role: UserRole;
   status: UserStatus;
   permissions: UserPermissions;
@@ -47,8 +48,57 @@ export interface CustomerRecord {
   isDeleted: boolean;
   deletedAt?: string | null;
   deletedBy?: string | null;
+  assignedDriverId?: string | null;
+  assignedDriverName?: string | null;
+  assignedAt?: string | null;
+  assignedBy?: string | null;
+  currentDeliveryStatus?: DeliveryStatus | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type DeliveryStatus = 'assigned' | 'in_transit' | 'delivered' | 'cancelled' | 'returned';
+
+export interface DeliveryRecord {
+  id: string;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  customerNotes?: string;
+  customerLatitude: number;
+  customerLongitude: number;
+  ownerId: string;
+  ownerName: string;
+  driverId: string;
+  driverName: string;
+  assignedBy: string;
+  assignedByName: string;
+  status: DeliveryStatus;
+  notes?: string;
+  assignedAt: string;
+  deliveredAt?: string | null;
+  deliveredBy?: string | null;
+  deliveredByName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NotificationRecord {
+  id: string;
+  userId: string;
+  title: string;
+  message: string;
+  type: 'delivery_delivered' | 'delivery_assigned' | 'system';
+  deliveryId?: string;
+  customerId?: string;
+  customerName?: string;
+  driverId?: string;
+  driverName?: string;
+  status?: string;
+  deliveredAt?: string;
+  isRead: boolean;
+  createdAt: string;
 }
 
 export interface DriverRecord {
@@ -68,10 +118,13 @@ export interface AuditLogRecord {
   userName: string;
   role: UserRole;
   action: string;
-  entityType: 'CUSTOMER' | 'USER' | 'DRIVER' | 'PERMISSION' | 'AUTH' | 'BACKUP' | 'LOG';
+  actionType?: string;
+  entityType: 'CUSTOMER' | 'USER' | 'DRIVER' | 'PERMISSION' | 'AUTH' | 'BACKUP' | 'LOG' | 'ASSIGNMENT' | 'DELIVERY';
   entityId?: string;
   customerId?: string;
   customerName?: string;
+  driverId?: string;
+  driverName?: string;
   details: string;
   oldData?: any;
   newData?: any;

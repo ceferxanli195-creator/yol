@@ -1,13 +1,31 @@
-import React, { useState } from 'react';
-import { Phone, MessageSquare, Navigation, Edit2, Trash2, MapPin, User as UserIcon, Calendar, Image as ImageIcon } from 'lucide-react';
-import { Customer } from '../types';
+import React, { useState, useEffect } from 'react';
+import {
+  Phone,
+  MessageSquare,
+  Navigation,
+  Edit2,
+  Trash2,
+  MapPin,
+  User as UserIcon,
+  Calendar,
+  Image as ImageIcon,
+  Truck,
+  Send,
+  CheckCircle2,
+  PackageCheck,
+  Clock,
+  X,
+} from 'lucide-react';
+import { Customer, Driver } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../api';
 
 interface CustomerCardProps {
   customer: Customer;
   onEdit?: (customer: Customer) => void;
   onDelete?: (customer: Customer) => void;
   onViewMap?: (customer: Customer) => void;
+  onUpdated?: (updatedCustomer: Customer) => void;
 }
 
 export const CustomerCard: React.FC<CustomerCardProps> = ({
@@ -15,9 +33,36 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
   onEdit,
   onDelete,
   onViewMap,
+  onUpdated,
 }) => {
   const { user, hasPermission } = useAuth();
   const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showDeliverModal, setShowDeliverModal] = useState(false);
+  const [deliveryNote, setDeliveryNote] = useState('');
+  const [isDelivering, setIsDelivering] = useState(false);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [selectedDriverId, setSelectedDriverId] = useState<string>(customer.assignedDriverId || '');
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  const handleDeliver = async () => {
+    setIsDelivering(true);
+    try {
+      const res = await api.deliverCustomer(customer.id, deliveryNote);
+      setShowDeliverModal(false);
+      setDeliveryNote('');
+      setActionSuccess('✓ Mal müştəriyə təhvil verildi və bildiriş göndərildi!');
+      if (onUpdated) {
+        onUpdated(res.customer);
+      }
+      setTimeout(() => setActionSuccess(null), 4000);
+    } catch (err: any) {
+      alert(err.message || 'Təhvil vermə zamanı xəta baş verdi.');
+    } finally {
+      setIsDelivering(false);
+    }
+  };
 
   const hasGps = customer.latitude !== 0 || customer.longitude !== 0;
 
@@ -34,20 +79,91 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
     ? `https://waze.com/ul?ll=${customer.latitude},${customer.longitude}&navigate=yes`
     : '#';
 
-  // Format WhatsApp message
-  const handleWhatsApp = () => {
-    let msg = `*Müştəri:* ${customer.fullName}\n*Telefon:* ${customer.phone}\n*Ünvan:* ${customer.address}`;
+  // Fetch drivers when assign modal opens
+  const handleOpenAssignModal = async () => {
+    try {
+      const res = await api.getDrivers();
+      setDrivers(res.drivers);
+      setSelectedDriverId(customer.assignedDriverId || '');
+      setShowAssignModal(true);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSaveDriverAssignment = async () => {
+    setIsAssigning(true);
+    try {
+      const res = await api.assignDriverToCustomer(
+        customer.id,
+        selectedDriverId ? selectedDriverId : null
+      );
+      if (onUpdated) {
+        onUpdated(res.customer);
+      }
+      setShowAssignModal(false);
+      setActionSuccess('Sürücü təyinatı yeniləndi.');
+      setTimeout(() => setActionSuccess(null), 3000);
+    } catch (err: any) {
+      alert(err.message || 'Təyinat zamanı xəta baş verdi.');
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  // Send information to customer (logged in business operations)
+  const handleSendToCustomer = async () => {
+    let msg = `Salam, hörmətli ${customer.fullName}!\n*Müştəri qeydiyyat məlumatınız:*\n*Telefon:* ${customer.phone}\n*Ünvan:* ${customer.address}`;
+    if (customer.notes) {
+      msg += `\n*Qeyd:* ${customer.notes}`;
+    }
+    if (hasGps) {
+      msg += `\n*Konum Koordinatları:* ${customer.latitude.toFixed(6)}, ${customer.longitude.toFixed(6)}`;
+      msg += `\n*Waze ilə naviqasiya linki:* https://waze.com/ul?ll=${customer.latitude},${customer.longitude}&navigate=yes`;
+    }
+
+    const cleanPhoneDigits = customer.phone.replace(/[^0-9]/g, '');
+    const encoded = encodeURIComponent(msg);
+    window.open(`https://api.whatsapp.com/send?phone=${cleanPhoneDigits}&text=${encoded}`, '_blank');
+
+    // Record on backend
+    try {
+      await api.sendLocationToCustomer(customer.id);
+      setActionSuccess('Müştəriyə göndərilmə qeydə alındı.');
+      setTimeout(() => setActionSuccess(null), 3000);
+    } catch {
+      // ignore
+    }
+  };
+
+  // Send information to driver (logged in business operations)
+  const handleSendToDriver = async () => {
+    let targetDriverId = customer.assignedDriverId;
+    if (!targetDriverId) {
+      handleOpenAssignModal();
+      return;
+    }
+
+    let msg = `*SÜRÜCÜ ÜÇÜN ÇATDIRILMA / KONUM MƏLUMATI*\n*Müştəri:* ${customer.fullName}\n*Telefon:* ${customer.phone}\n*Ünvan:* ${customer.address}`;
     if (customer.notes) {
       msg += `\n*Qeyd:* ${customer.notes}`;
     }
     if (hasGps) {
       msg += `\n*GPS:* ${customer.latitude.toFixed(6)}, ${customer.longitude.toFixed(6)}`;
-      msg += `\n*Waze ilə naviqasiya:* https://waze.com/ul?ll=${customer.latitude},${customer.longitude}&navigate=yes`;
+      msg += `\n*Waze ilə birbaşa naviqasiya:* https://waze.com/ul?ll=${customer.latitude},${customer.longitude}&navigate=yes`;
     }
 
     const encoded = encodeURIComponent(msg);
-    // WhatsApp direct link
     window.open(`https://api.whatsapp.com/send?text=${encoded}`, '_blank');
+
+    // Record on backend
+    try {
+      await api.sendLocationToDriver(customer.id, targetDriverId);
+      setActionSuccess('Sürücüyə göndərilmə qeydə alındı.');
+      setTimeout(() => setActionSuccess(null), 3000);
+    } catch {
+      // ignore
+    }
   };
 
   const handleWaze = () => {
@@ -69,7 +185,7 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
         <div>
           {/* Header row: Name + Owner/GPS badges */}
           <div className="flex items-start justify-between gap-3 mb-3">
-            <div className="flex items-start gap-3">
+            <div className="flex items-start gap-3 min-w-0">
               {customer.photoUrl ? (
                 <button
                   type="button"
@@ -91,8 +207,8 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
                 </div>
               )}
 
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white leading-tight">
+              <div className="min-w-0">
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white leading-tight truncate">
                   {customer.fullName}
                 </h3>
                 <a
@@ -113,6 +229,62 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
               </div>
             )}
           </div>
+
+          {/* Assigned Driver & Delivery Status Bar */}
+          <div className="mb-3 p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200/70 dark:border-slate-700/60 text-xs space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Truck className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Sürücü:</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                  {customer.assignedDriverName ? customer.assignedDriverName : 'Təyin edilməyib'}
+                </span>
+              </div>
+
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={handleOpenAssignModal}
+                  className="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:underline shrink-0"
+                >
+                  {customer.assignedDriverId ? 'Dəyiş' : 'Təyin et'}
+                </button>
+              )}
+            </div>
+
+            {/* Delivery Status Indicator */}
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/50 dark:border-slate-700/50">
+              <span className="text-slate-500 dark:text-slate-400 font-medium text-[11px]">Çatdırılma:</span>
+              {customer.currentDeliveryStatus === 'delivered' ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                  <CheckCircle2 className="w-3 h-3" />
+                  Təhvil verildi
+                </span>
+              ) : customer.currentDeliveryStatus === 'in_transit' ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                  <Truck className="w-3 h-3" />
+                  Yoldadır
+                </span>
+              ) : customer.currentDeliveryStatus === 'assigned' || customer.assignedDriverId ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/70 text-sky-700 dark:text-sky-300 border border-sky-300 dark:border-sky-800">
+                  <Clock className="w-3 h-3" />
+                  Yönləndirildi (Gözləyir)
+                </span>
+              ) : (
+                <span className="text-[11px] font-medium text-slate-400">
+                  Gözləmədə
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Action Success Toast */}
+          {actionSuccess && (
+            <div className="mb-3 p-2 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-1.5 animate-in fade-in">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span>{actionSuccess}</span>
+            </div>
+          )}
 
           {/* Address & Note */}
           <div className="space-y-1.5 mb-4 text-sm">
@@ -160,28 +332,44 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
           {/* Call button */}
           <a
             href={`tel:${cleanPhone}`}
-            className="flex-1 min-w-[76px] h-10 px-3 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border border-emerald-200/60 dark:border-emerald-900/50"
+            className="flex-1 min-w-[70px] h-10 px-2.5 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border border-emerald-200/60 dark:border-emerald-900/50"
+            title="Zəng et"
           >
             <Phone className="w-4 h-4" />
             <span>Zəng</span>
           </a>
 
-          {/* WhatsApp button */}
+          {/* WhatsApp / Send to Customer button */}
           <button
             type="button"
-            onClick={handleWhatsApp}
-            className="flex-1 min-w-[90px] h-10 px-3 bg-teal-50 dark:bg-teal-950/40 hover:bg-teal-100 dark:hover:bg-teal-900/50 text-teal-700 dark:text-teal-400 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border border-teal-200/60 dark:border-teal-900/50"
+            onClick={handleSendToCustomer}
+            className="flex-1 min-w-[85px] h-10 px-2.5 bg-teal-50 dark:bg-teal-950/40 hover:bg-teal-100 dark:hover:bg-teal-900/50 text-teal-700 dark:text-teal-400 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border border-teal-200/60 dark:border-teal-900/50"
+            title="Müştəriyə WhatsApp ilə göndər və qeyd et"
           >
             <MessageSquare className="w-4 h-4" />
-            <span>WhatsApp</span>
+            <span>Müştəriyə</span>
           </button>
+
+          {/* Send to Driver button */}
+          {!isDriver && (
+            <button
+              type="button"
+              onClick={handleSendToDriver}
+              className="flex-1 min-w-[85px] h-10 px-2.5 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-400 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border border-amber-200/60 dark:border-amber-900/50"
+              title="Sürücüyə WhatsApp ilə göndər və təyin et"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Sürücüyə</span>
+            </button>
+          )}
 
           {/* Waze button */}
           <button
             type="button"
             onClick={handleWaze}
             disabled={!hasGps}
-            className="flex-1 min-w-[80px] h-10 px-3 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-700 dark:text-sky-400 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border border-sky-200/60 dark:border-sky-900/50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 min-w-[70px] h-10 px-2.5 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-700 dark:text-sky-400 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border border-sky-200/60 dark:border-sky-900/50 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Waze ilə get"
           >
             <Navigation className="w-4 h-4" />
             <span>Waze</span>
@@ -192,7 +380,7 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
             <button
               type="button"
               onClick={() => onEdit(customer)}
-              className="w-10 h-10 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl flex items-center justify-center transition-colors"
+              className="w-10 h-10 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl flex items-center justify-center transition-colors shrink-0"
               title="Redaktə et"
             >
               <Edit2 className="w-4 h-4" />
@@ -204,14 +392,108 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
             <button
               type="button"
               onClick={() => onDelete(customer)}
-              className="w-10 h-10 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 rounded-xl flex items-center justify-center transition-colors border border-rose-200/50 dark:border-rose-900/50"
+              className="w-10 h-10 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 rounded-xl flex items-center justify-center transition-colors border border-rose-200/50 dark:border-rose-900/50 shrink-0"
               title="Sil"
             >
               <Trash2 className="w-4 h-4" />
             </button>
           )}
+
+          {/* Sürücü üçün "Təhvil verdim" düyməsi (Requirement 6 & 11) */}
+          {(isDriver || isAdmin) && (
+            <div className="w-full pt-1.5">
+              {customer.currentDeliveryStatus === 'delivered' ? (
+                <button
+                  type="button"
+                  disabled
+                  className="w-full h-10 px-3 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-emerald-300 dark:border-emerald-800 cursor-not-allowed opacity-90"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Artıq təhvil verilib</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowDeliverModal(true)}
+                  className="w-full h-10 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
+                >
+                  <PackageCheck className="w-4 h-4" />
+                  <span>Təhvil verdim</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Driver Assignment Modal */}
+      {showAssignModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in"
+          onClick={() => setShowAssignModal(false)}
+        >
+          <div
+            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Truck className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                  Sürücü Təyin Et
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAssignModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              <span className="font-bold">{customer.fullName}</span> adlı müştərini hansı sürücüyə təyin etmək istəyirsiniz?
+            </p>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Sürücü siyahısı
+              </label>
+              <select
+                value={selectedDriverId}
+                onChange={(e) => setSelectedDriverId(e.target.value)}
+                className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+              >
+                <option value="">-- Təyinatı ləğv et (Sürücüsüz) --</option>
+                {drivers.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} ({d.phone}) {d.status === 'inactive' ? '[Deaktiv]' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowAssignModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+              >
+                İmtina
+              </button>
+              <button
+                type="button"
+                disabled={isAssigning}
+                onClick={handleSaveDriverAssignment}
+                className="px-4 py-2 text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white rounded-xl shadow-xs disabled:opacity-50"
+              >
+                {isAssigning ? 'Saxlanılır...' : 'Təsdiq Et'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Customer Photo Modal */}
       {showPhotoModal && customer.photoUrl && (
@@ -227,6 +509,80 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
             />
             <div className="p-3 text-center text-white font-medium text-sm">
               {customer.fullName}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deliver Confirmation Modal (Requirement 6 & 11) */}
+      {showDeliverModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in"
+          onClick={() => setShowDeliverModal(false)}
+        >
+          <div
+            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <PackageCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                  Malı Təhvil Ver
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeliverModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-emerald-50 dark:bg-emerald-950/40 p-3 rounded-xl border border-emerald-200/60 dark:border-emerald-900/40 text-xs text-emerald-800 dark:text-emerald-300">
+              <p className="font-semibold">
+                {customer.fullName} müştərisinə sifarişin çatdırıldığını təsdiq edirsiniz?
+              </p>
+              <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
+                {customer.address}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Qeyd (İstəyə görə)
+              </label>
+              <textarea
+                value={deliveryNote}
+                onChange={(e) => setDeliveryNote(e.target.value)}
+                rows={2}
+                placeholder="Məsələn: Mal qapıda təhvil verildi, ödəniş alındı..."
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500 resize-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowDeliverModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+              >
+                İmtina
+              </button>
+              <button
+                type="button"
+                disabled={isDelivering}
+                onClick={handleDeliver}
+                className="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {isDelivering ? (
+                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                )}
+                <span>Təsdiq et (Təhvil verdim)</span>
+              </button>
             </div>
           </div>
         </div>

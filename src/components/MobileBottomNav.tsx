@@ -36,23 +36,23 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ currentTab, on
     primaryTabs = [
       { tab: 'dashboard', label: 'Əsas', icon: LayoutDashboard },
       { tab: 'customers', label: 'Müştərilər', icon: Users },
+      { tab: 'deliveries', label: 'Tarixçə', icon: History },
       { tab: 'map', label: 'Xəritə', icon: MapPin },
-      { tab: 'users', label: 'İstifadəçilər', icon: UserCog },
     ];
   } else if (isDriver) {
     primaryTabs = [
       { tab: 'dashboard', label: 'Əsas', icon: LayoutDashboard },
       { tab: 'customers', label: 'Müştərilər', icon: Users },
+      { tab: 'deliveries', label: 'Tarixçə', icon: History },
       { tab: 'map', label: 'Xəritə', icon: MapPin },
-      { tab: 'settings', label: 'Hesab', icon: Settings },
     ];
   } else {
     // Normal User
     primaryTabs = [
       { tab: 'dashboard', label: 'Əsas', icon: LayoutDashboard },
       { tab: 'customers', label: 'Müştərilər', icon: Users },
+      { tab: 'deliveries', label: 'Tarixçə', icon: History },
       { tab: 'map', label: 'Xəritə', icon: MapPin },
-      { tab: 'settings', label: 'Hesab', icon: Settings },
     ];
   }
 
@@ -60,16 +60,21 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ currentTab, on
   const moreItems: Array<{ tab: NavTab; label: string; icon: React.FC<{ className?: string }> }> = [];
   if (isAdmin) {
     moreItems.push(
+      { tab: 'users', label: 'İstifadəçilər', icon: UserCog },
       { tab: 'drivers', label: 'Sürücülər', icon: Truck },
       { tab: 'permissions', label: 'İcazələr', icon: ShieldCheck },
-      { tab: 'logs', label: 'Tarixçə / Audit', icon: History },
+      { tab: 'logs', label: 'Audit Jurnalı', icon: History },
       { tab: 'trash', label: 'Zibil Qutusu', icon: Trash2 },
       { tab: 'settings', label: 'Hesab və Ayarlar', icon: Settings }
     );
-  } else if (!isDriver) {
+  } else if (isDriver) {
     moreItems.push(
-      { tab: 'logs', label: 'Şəxsi Tarixçə', icon: History },
-      { tab: 'trash', label: 'Zibil Qutusu', icon: Trash2 }
+      { tab: 'settings', label: 'Profil və Şifrə', icon: Settings }
+    );
+  } else {
+    moreItems.push(
+      { tab: 'logs', label: 'Son Əməliyyatlar', icon: History },
+      { tab: 'settings', label: 'Hesab və Ayarlar', icon: Settings }
     );
   }
 

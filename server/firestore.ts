@@ -10,7 +10,7 @@ import {
   collection,
   Firestore,
 } from 'firebase/firestore';
-import { CustomerRecord, UserRecord, DriverRecord, AuditLogRecord } from './types';
+import { CustomerRecord, UserRecord, DriverRecord, AuditLogRecord, DeliveryRecord, NotificationRecord } from './types';
 
 let db: Firestore | null = null;
 
@@ -37,13 +37,27 @@ export function getFirestoreDb(): Firestore | null {
   }
 }
 
+function sanitizeForFirestore<T>(data: T): any {
+  if (data === null || data === undefined) return null;
+  if (typeof data !== 'object') return data;
+  if (Array.isArray(data)) return data.map(sanitizeForFirestore);
+  
+  const clean: Record<string, any> = {};
+  for (const [k, v] of Object.entries(data as Record<string, any>)) {
+    if (v !== undefined) {
+      clean[k] = sanitizeForFirestore(v);
+    }
+  }
+  return clean;
+}
+
 // Save customer to Firestore
 export async function syncCustomerToFirestore(customer: CustomerRecord): Promise<void> {
   const fdb = getFirestoreDb();
   if (!fdb) return;
   try {
     const docRef = doc(fdb, 'customers', customer.id);
-    await setDoc(docRef, customer, { merge: true });
+    await setDoc(docRef, sanitizeForFirestore(customer), { merge: true });
   } catch (err) {
     console.error(`Failed to sync customer ${customer.id} to Firestore:`, err);
   }
@@ -67,7 +81,7 @@ export async function syncUserToFirestore(user: UserRecord): Promise<void> {
   if (!fdb) return;
   try {
     const docRef = doc(fdb, 'users', user.id);
-    await setDoc(docRef, user, { merge: true });
+    await setDoc(docRef, sanitizeForFirestore(user), { merge: true });
   } catch (err) {
     console.error(`Failed to sync user ${user.id} to Firestore:`, err);
   }
@@ -91,7 +105,7 @@ export async function syncDriverToFirestore(driver: DriverRecord): Promise<void>
   if (!fdb) return;
   try {
     const docRef = doc(fdb, 'drivers', driver.id);
-    await setDoc(docRef, driver, { merge: true });
+    await setDoc(docRef, sanitizeForFirestore(driver), { merge: true });
   } catch (err) {
     console.error(`Failed to sync driver ${driver.id} to Firestore:`, err);
   }
@@ -115,9 +129,53 @@ export async function syncLogToFirestore(log: AuditLogRecord): Promise<void> {
   if (!fdb) return;
   try {
     const docRef = doc(fdb, 'logs', log.id);
-    await setDoc(docRef, log);
+    await setDoc(docRef, sanitizeForFirestore(log));
   } catch (err) {
     console.error(`Failed to sync log ${log.id} to Firestore:`, err);
+  }
+}
+
+// Save delivery to Firestore
+export async function syncDeliveryToFirestore(delivery: DeliveryRecord): Promise<void> {
+  const fdb = getFirestoreDb();
+  if (!fdb) return;
+  try {
+    const docRef = doc(fdb, 'deliveries', delivery.id);
+    await setDoc(docRef, sanitizeForFirestore(delivery), { merge: true });
+  } catch (err) {
+    console.error(`Failed to sync delivery ${delivery.id} to Firestore:`, err);
+  }
+}
+
+export async function deleteDeliveryFromFirestore(id: string): Promise<void> {
+  const fdb = getFirestoreDb();
+  if (!fdb) return;
+  try {
+    await deleteDoc(doc(fdb, 'deliveries', id));
+  } catch (err) {
+    console.error(`Failed to delete delivery ${id} from Firestore:`, err);
+  }
+}
+
+// Save notification to Firestore
+export async function syncNotificationToFirestore(notification: NotificationRecord): Promise<void> {
+  const fdb = getFirestoreDb();
+  if (!fdb) return;
+  try {
+    const docRef = doc(fdb, 'notifications', notification.id);
+    await setDoc(docRef, sanitizeForFirestore(notification), { merge: true });
+  } catch (err) {
+    console.error(`Failed to sync notification ${notification.id} to Firestore:`, err);
+  }
+}
+
+export async function deleteNotificationFromFirestore(id: string): Promise<void> {
+  const fdb = getFirestoreDb();
+  if (!fdb) return;
+  try {
+    await deleteDoc(doc(fdb, 'notifications', id));
+  } catch (err) {
+    console.error(`Failed to delete notification ${id} from Firestore:`, err);
   }
 }
 
@@ -127,6 +185,8 @@ export async function loadInitialDataFromFirestore(): Promise<{
   users?: UserRecord[];
   drivers?: DriverRecord[];
   logs?: AuditLogRecord[];
+  deliveries?: DeliveryRecord[];
+  notifications?: NotificationRecord[];
 }> {
   const fdb = getFirestoreDb();
   if (!fdb) return {};
@@ -136,6 +196,8 @@ export async function loadInitialDataFromFirestore(): Promise<{
     users?: UserRecord[];
     drivers?: DriverRecord[];
     logs?: AuditLogRecord[];
+    deliveries?: DeliveryRecord[];
+    notifications?: NotificationRecord[];
   } = {};
 
   try {
@@ -161,6 +223,18 @@ export async function loadInitialDataFromFirestore(): Promise<{
     const logSnap = await getDocs(collection(fdb, 'logs'));
     if (!logSnap.empty) {
       result.logs = logSnap.docs.map(d => d.data() as AuditLogRecord);
+    }
+
+    // Deliveries
+    const deliverySnap = await getDocs(collection(fdb, 'deliveries'));
+    if (!deliverySnap.empty) {
+      result.deliveries = deliverySnap.docs.map(d => d.data() as DeliveryRecord);
+    }
+
+    // Notifications
+    const notifSnap = await getDocs(collection(fdb, 'notifications'));
+    if (!notifSnap.empty) {
+      result.notifications = notifSnap.docs.map(d => d.data() as NotificationRecord);
     }
   } catch (err) {
     console.error('Error fetching initial records from Firestore:', err);

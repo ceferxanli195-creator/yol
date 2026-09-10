@@ -8,6 +8,7 @@ import { CustomerFormModal } from './components/CustomerFormModal';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { CustomersPage } from './pages/CustomersPage';
+import { DeliveriesPage } from './pages/DeliveriesPage';
 import { MapPage } from './pages/MapPage';
 import { DriversPage } from './pages/DriversPage';
 import { UsersPage } from './pages/UsersPage';
@@ -83,6 +84,7 @@ export default function App() {
             />
           )}
           {currentTab === 'customers' && <CustomersPage />}
+          {currentTab === 'deliveries' && <DeliveriesPage />}
           {currentTab === 'map' && <MapPage />}
           {currentTab === 'drivers' && <DriversPage />}
           {currentTab === 'users' && <UsersPage />}

@@ -3,6 +3,7 @@ import { Compass, Moon, Sun, LogOut, Shield, Truck, User as UserIcon } from 'luc
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { ConfirmModal } from './ConfirmModal';
+import { NotificationsDropdown } from './NotificationsDropdown';
 
 interface NavbarProps {
   onNavigateHome: () => void;
@@ -70,6 +71,9 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateHome }) => {
                 {getRoleBadge()}
               </div>
             )}
+
+            {/* Notifications Bell */}
+            {user && <NotificationsDropdown />}
 
             {/* Dark / Light Toggle */}
             <button

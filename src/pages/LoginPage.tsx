@@ -114,23 +114,6 @@ export const LoginPage: React.FC = () => {
             <span>{isLoading ? 'Yoxlanılır...' : 'Sistemə Daxil Ol'}</span>
           </button>
         </form>
-
-        {/* Initial Setup Guidance */}
-        <div className="mt-8 pt-6 border-t border-slate-200/80 dark:border-slate-800 text-center">
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Sistemə ilk daxilolma üçün master Admin:{' '}
-            <span className="font-mono font-semibold text-slate-700 dark:text-slate-200">
-              admin
-            </span>{' '}
-            / şifrə:{' '}
-            <span className="font-mono font-semibold text-slate-700 dark:text-slate-200">
-              admin123
-            </span>
-          </p>
-          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-            Daxil olduqdan sonra şifrənizi profil bölməsindən dəyişdirə bilərsiniz.
-          </p>
-        </div>
       </div>
     </div>
   );

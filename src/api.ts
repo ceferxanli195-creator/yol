@@ -1,4 +1,4 @@
-import { User, Customer, Driver, AuditLog, DashboardStats } from './types';
+import { User, Customer, Driver, AuditLog, DashboardStats, Delivery, NotificationItem } from './types';
 
 const TOKEN_KEY = 'mustari_gps_auth_token';
 
@@ -79,26 +79,50 @@ export const api = {
     request<DashboardStats>('/api/dashboard/stats'),
 
   // Customers
-  getCustomers: (params?: { search?: string; ownerId?: string }) => {
+  getCustomers: (params?: { search?: string; ownerId?: string; driverId?: string }) => {
     const q = new URLSearchParams();
     if (params?.search) q.set('search', params.search);
     if (params?.ownerId) q.set('ownerId', params.ownerId);
+    if (params?.driverId) q.set('driverId', params.driverId);
     return request<{ customers: Customer[] }>(`/api/customers?${q.toString()}`);
   },
 
   getCustomerById: (id: string) =>
     request<{ customer: Customer }>(`/api/customers/${id}`),
 
-  createCustomer: (data: Partial<Customer>) =>
+  createCustomer: (data: Partial<Customer> & { assignedDriverId?: string | null }) =>
     request<{ customer: Customer }>('/api/customers', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  updateCustomer: (id: string, data: Partial<Customer>) =>
+  updateCustomer: (id: string, data: Partial<Customer> & { assignedDriverId?: string | null }) =>
     request<{ customer: Customer }>(`/api/customers/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
+    }),
+
+  assignDriverToCustomer: (customerId: string, driverId: string | null) =>
+    request<{ customer: Customer }>(`/api/customers/${customerId}/assign-driver`, {
+      method: 'POST',
+      body: JSON.stringify({ driverId }),
+    }),
+
+  sendLocationToDriver: (customerId: string, driverId?: string) =>
+    request<{ success: boolean; message: string }>(`/api/customers/${customerId}/send-location-to-driver`, {
+      method: 'POST',
+      body: JSON.stringify({ driverId }),
+    }),
+
+  sendLocationToCustomer: (customerId: string) =>
+    request<{ success: boolean; message: string }>(`/api/customers/${customerId}/send-location-to-customer`, {
+      method: 'POST',
+    }),
+
+  deliverCustomer: (customerId: string, note?: string) =>
+    request<{ success: boolean; customer: Customer; delivery: Delivery; message: string }>(`/api/customers/${customerId}/deliver`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
     }),
 
   deleteCustomer: (id: string) =>
@@ -163,12 +187,30 @@ export const api = {
     }),
 
   // Audit Logs
-  getLogs: (params?: { search?: string; action?: string; entityType?: string }) => {
+  getLogs: (params?: { search?: string; action?: string; entityType?: string; date?: string; userId?: string; customerId?: string; driverId?: string; actionType?: string }) => {
     const q = new URLSearchParams();
     if (params?.search) q.set('search', params.search);
     if (params?.action) q.set('action', params.action);
+    if (params?.actionType) q.set('actionType', params.actionType);
     if (params?.entityType) q.set('entityType', params.entityType);
+    if (params?.date) q.set('date', params.date);
+    if (params?.userId) q.set('userId', params.userId);
+    if (params?.customerId) q.set('customerId', params.customerId);
+    if (params?.driverId) q.set('driverId', params.driverId);
     return request<{ logs: AuditLog[] }>(`/api/logs?${q.toString()}`);
+  },
+
+  // Business Operations (excluding auth/session logs)
+  getOperations: (params?: { search?: string; date?: string; user?: string; customer?: string; driver?: string; actionType?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.search) q.set('search', params.search);
+    if (params?.date) q.set('date', params.date);
+    if (params?.user) q.set('user', params.user);
+    if (params?.customer) q.set('customer', params.customer);
+    if (params?.driver) q.set('driver', params.driver);
+    if (params?.actionType) q.set('actionType', params.actionType);
+    if (params?.limit) q.set('limit', params.limit.toString());
+    return request<{ operations: AuditLog[] }>(`/api/operations?${q.toString()}`);
   },
 
   deleteLogs: (logIds: string[], all: boolean = false) =>
@@ -203,5 +245,60 @@ export const api = {
     request<{ success: boolean; count: number; message: string }>('/api/backup/restore', {
       method: 'POST',
       body: JSON.stringify({ backupData }),
+    }),
+
+  // Deliveries API
+  getDeliveries: (params?: { driverId?: string; customerId?: string; ownerId?: string; status?: string; date?: string; search?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.driverId) q.set('driverId', params.driverId);
+    if (params?.customerId) q.set('customerId', params.customerId);
+    if (params?.ownerId) q.set('ownerId', params.ownerId);
+    if (params?.status) q.set('status', params.status);
+    if (params?.date) q.set('date', params.date);
+    if (params?.search) q.set('search', params.search);
+    return request<{
+      deliveries: Delivery[];
+      driverStats: Array<{ driverId: string; driverName: string; count: number; deliveredCount: number }>;
+    }>(`/api/deliveries?${q.toString()}`);
+  },
+
+  createDelivery: (data: { customerId: string; driverId: string; notes?: string; status?: string }) =>
+    request<{ delivery: Delivery }>('/api/deliveries', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  startDelivery: (id: string) =>
+    request<{ delivery: Delivery }>(`/api/deliveries/${id}/start`, {
+      method: 'POST',
+    }),
+
+  deliverDelivery: (id: string, note?: string) =>
+    request<{ delivery: Delivery }>(`/api/deliveries/${id}/deliver`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+
+  getDriverDeliveryStats: (driverId?: string) => {
+    const q = new URLSearchParams();
+    if (driverId) q.set('driverId', driverId);
+    return request<{ stats: any }>(`/api/deliveries/driver-stats?${q.toString()}`);
+  },
+
+  // Notifications API
+  getNotifications: () =>
+    request<{ notifications: NotificationItem[]; unreadCount: number }>('/api/notifications'),
+
+  getUnreadNotificationCount: () =>
+    request<{ unreadCount: number }>('/api/notifications/unread-count'),
+
+  markNotificationAsRead: (id: string) =>
+    request<{ success: boolean }>(`/api/notifications/${id}/read`, {
+      method: 'POST',
+    }),
+
+  markAllNotificationsAsRead: () =>
+    request<{ success: boolean; count: number }>('/api/notifications/read-all', {
+      method: 'POST',
     }),
 };

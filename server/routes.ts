@@ -199,16 +199,42 @@ router.get('/dashboard/stats', authMiddleware, (req: AuthRequest, res) => {
   try {
     const role = req.user!.role;
     const userId = req.user!.id;
+    const todayStr = new Date().toISOString().slice(0, 10);
+
     const allCustomers = db.getCustomers(true);
     const activeCustomers = allCustomers.filter(c => !c.isDeleted);
     const deletedCustomers = allCustomers.filter(c => c.isDeleted);
     const users = db.getUsers();
     const drivers = db.getDrivers();
-    const allLogs = db.getLogs();
+
+    // Business operations (no auth logs)
+    const businessOps = db.getOperations({ userRole: role, userId });
+    const todayOperations = businessOps.filter(o => o.createdAt.startsWith(todayStr)).length;
+
+    const allDeliveries = db.getDeliveries();
 
     if (role === 'ADMIN') {
-      const recentCustomers = activeCustomers.slice(0, 5);
-      const recentActivities = allLogs.slice(0, 8);
+      const todayCustomers = activeCustomers.filter(c => c.createdAt.startsWith(todayStr)).length;
+      const todayDrivers = drivers.filter(d => d.createdAt.startsWith(todayStr)).length;
+      const pendingAssignments = activeCustomers.filter(c => !c.assignedDriverId).length;
+
+      const recentCustomers = activeCustomers.slice(0, 6);
+      const recentDrivers = drivers.slice(0, 6);
+      const recentAssignments = activeCustomers
+        .filter(c => c.assignedDriverId && c.assignedDriverName)
+        .slice(0, 6)
+        .map(c => ({
+          id: c.id,
+          customerName: c.fullName,
+          driverName: c.assignedDriverName || 'Sürücü',
+          assignedAt: c.assignedAt || c.updatedAt,
+        }));
+      const recentActivities = businessOps.slice(0, 10);
+
+      const todayDelivered = allDeliveries.filter(d => d.status === 'delivered' && d.deliveredAt?.startsWith(todayStr)).length;
+      const inTransitDeliveries = allDeliveries.filter(d => d.status === 'in_transit').length;
+      const deliveredDeliveries = allDeliveries.filter(d => d.status === 'delivered').length;
+      const pendingDeliveries = allDeliveries.filter(d => d.status === 'assigned').length;
 
       return res.json({
         totalUsers: users.length,
@@ -218,7 +244,19 @@ router.get('/dashboard/stats', authMiddleware, (req: AuthRequest, res) => {
         deletedCustomers: deletedCustomers.length,
         totalDrivers: drivers.length,
         activeDrivers: drivers.filter(d => d.status === 'active').length,
+        todayCustomers,
+        todayDrivers,
+        todayOperations,
+        pendingAssignments,
+        // Delivery stats (Requirement 14)
+        totalDeliveries: allDeliveries.length,
+        todayDelivered,
+        inTransitDeliveries,
+        deliveredDeliveries,
+        pendingDeliveries,
         recentCustomers,
+        recentDrivers,
+        recentAssignments,
         recentActivities,
       });
     }
@@ -226,30 +264,63 @@ router.get('/dashboard/stats', authMiddleware, (req: AuthRequest, res) => {
     if (role === 'USER') {
       const userActive = activeCustomers.filter(c => c.ownerId === userId);
       const userDeleted = deletedCustomers.filter(c => c.ownerId === userId);
-      const userLogs = allLogs.filter(l => l.userId === userId).slice(0, 8);
+      const todayCustomers = userActive.filter(c => c.createdAt.startsWith(todayStr)).length;
+      const pendingAssignments = userActive.filter(c => !c.assignedDriverId).length;
+      const recentActivities = businessOps.slice(0, 10);
+
+      const userDeliveries = allDeliveries.filter(d => d.ownerId === userId);
+      const inTransitDeliveries = userDeliveries.filter(d => d.status === 'in_transit').length;
+      const deliveredDeliveries = userDeliveries.filter(d => d.status === 'delivered').length;
+      const pendingDeliveries = userDeliveries.filter(d => d.status === 'assigned').length;
+      const todayDelivered = userDeliveries.filter(d => d.status === 'delivered' && d.deliveredAt?.startsWith(todayStr)).length;
 
       return res.json({
         totalCustomers: userActive.length,
         activeCustomers: userActive.length,
         deletedCustomers: userDeleted.length,
-        recentCustomers: userActive.slice(0, 5),
-        recentActivities: userLogs,
+        totalDrivers: drivers.length,
+        activeDrivers: drivers.filter(d => d.status === 'active').length,
+        todayCustomers,
+        todayOperations,
+        pendingAssignments,
+        // User delivery stats (Requirement 14)
+        myCustomers: userActive.length,
+        totalDeliveries: userDeliveries.length,
+        inTransitDeliveries,
+        deliveredDeliveries,
+        pendingDeliveries,
+        todayDelivered,
+        recentCustomers: userActive.slice(0, 6),
+        recentActivities,
       });
     }
 
     // DRIVER view
-    const userGroups = users
-      .filter(u => u.role === 'USER' || u.role === 'ADMIN')
-      .map(u => ({
-        userId: u.id,
-        userName: u.name,
-        customerCount: activeCustomers.filter(c => c.ownerId === u.id).length,
-      }));
+    const driverAssigned = activeCustomers.filter(c => c.assignedDriverId === userId);
+    const recentActivities = businessOps.slice(0, 10);
+    const driverDeliveries = allDeliveries.filter(d => d.driverId === userId);
+    const assignedDeliveries = driverDeliveries.filter(d => d.status === 'assigned').length;
+    const inTransitDeliveries = driverDeliveries.filter(d => d.status === 'in_transit').length;
+    const todayAssignedDeliveries = driverDeliveries.filter(d => d.assignedAt?.startsWith(todayStr)).length;
+    const todayDelivered = driverDeliveries.filter(d => d.status === 'delivered' && d.deliveredAt?.startsWith(todayStr)).length;
+    const deliveredDeliveries = driverDeliveries.filter(d => d.status === 'delivered').length;
+    const lastDelivery = db.getDriverLastDelivery(userId) || null;
 
     return res.json({
       totalCustomers: activeCustomers.length,
-      userGroups,
-      totalDrivers: drivers.length,
+      activeCustomers: activeCustomers.length,
+      driverAssignedCustomers: driverAssigned.length,
+      todayOperations,
+      // Driver delivery stats (Requirement 4 & 14)
+      assignedDeliveries,
+      inTransitDeliveries,
+      todayAssignedDeliveries,
+      todayDelivered,
+      deliveredDeliveries,
+      totalDeliveries: driverDeliveries.length,
+      lastDelivery,
+      recentCustomers: driverAssigned.slice(0, 6),
+      recentActivities,
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'Statistika yüklənərkən xəta baş verdi.' });
@@ -262,17 +333,27 @@ router.get('/dashboard/stats', authMiddleware, (req: AuthRequest, res) => {
 
 router.get('/customers', authMiddleware, requirePermission('view_customers'), (req: AuthRequest, res) => {
   try {
-    const { search, ownerId } = req.query;
+    const { search, ownerId, driverId } = req.query;
     const role = req.user!.role;
     const currentUserId = req.user!.id;
 
     let list = db.getCustomers(false); // active only
 
-    // STRICT ISOLATION: Normal USER can ONLY see their own customers
+    // STRICT ISOLATION:
+    // Regular USER can only see their own customers.
+    // SÜRÜCÜ (DRIVER) can see ALL customers according to Requirement 2!
     if (role === 'USER') {
       list = list.filter(c => c.ownerId === currentUserId);
     } else if (ownerId && typeof ownerId === 'string') {
       list = list.filter(c => c.ownerId === ownerId);
+    }
+
+    if (driverId && typeof driverId === 'string') {
+      if (driverId === 'me' && role === 'DRIVER') {
+        list = list.filter(c => c.assignedDriverId === currentUserId);
+      } else {
+        list = list.filter(c => c.assignedDriverId === driverId);
+      }
     }
 
     // Search query
@@ -284,17 +365,18 @@ router.get('/customers', authMiddleware, requirePermission('view_customers'), (r
         const nameMatch = azNormalize(c.fullName).includes(q);
         const addressMatch = azNormalize(c.address).includes(q);
         const notesMatch = azNormalize(c.notes || '').includes(q);
+        const driverMatch = azNormalize(c.assignedDriverName || '').includes(q);
         const rawPhoneMatch = c.phone.includes(search.trim());
         const normPhoneMatch = qDigits.length >= 3 && (
           c.phoneNormalized.includes(qDigits) ||
           normalizePhone(c.phone).includes(qDigits)
         );
 
-        return nameMatch || addressMatch || notesMatch || rawPhoneMatch || normPhoneMatch;
+        return nameMatch || addressMatch || notesMatch || driverMatch || rawPhoneMatch || normPhoneMatch;
       });
     }
 
-    // Enrich with owner info for Admin and Driver
+    // Enrich with owner info
     const usersMap = new Map(db.getUsers().map(u => [u.id, u.name]));
     const enriched = list.map(c => ({
       ...c,
@@ -333,7 +415,7 @@ router.get('/customers/:id', authMiddleware, (req: AuthRequest, res) => {
 
 router.post('/customers', authMiddleware, requirePermission('create_customer'), (req: AuthRequest, res) => {
   try {
-    const { firstName, lastName, phone, address, notes, latitude, longitude, accuracy, photoUrl, ownerId } = req.body;
+    const { firstName, lastName, phone, address, notes, latitude, longitude, accuracy, photoUrl, ownerId, assignedDriverId } = req.body;
 
     if (!firstName || !phone || !address) {
       return res.status(400).json({ error: 'Ad, telefon və ünvan vacib sahələrdir.' });
@@ -349,6 +431,12 @@ router.post('/customers', authMiddleware, requirePermission('create_customer'), 
       assignedOwnerId = targetUser.id;
     }
 
+    let driverName: string | null = null;
+    if (assignedDriverId) {
+      const drv = db.getDriverById(assignedDriverId);
+      if (drv) driverName = drv.name;
+    }
+
     const customer = db.createCustomer({
       ownerId: assignedOwnerId,
       createdBy: req.user!.id,
@@ -361,18 +449,23 @@ router.post('/customers', authMiddleware, requirePermission('create_customer'), 
       longitude: Number(longitude) || 0,
       accuracy: Number(accuracy) || 0,
       photoUrl,
+      assignedDriverId: assignedDriverId || null,
+      assignedDriverName: driverName,
     });
 
     db.addLog({
       userId: req.user!.id,
       userName: req.user!.name,
       role: req.user!.role,
-      action: 'CREATE_CUSTOMER',
+      actionType: 'CUSTOMER_CREATE',
+      action: `Yeni müştəri əlavə edildi: ${customer.fullName}`,
       entityType: 'CUSTOMER',
       entityId: customer.id,
       customerId: customer.id,
       customerName: customer.fullName,
-      details: `${req.user!.name} yeni müştəri əlavə etdi: ${customer.fullName} (${customer.phone})`,
+      driverId: customer.assignedDriverId || undefined,
+      driverName: customer.assignedDriverName || undefined,
+      details: `Yeni müştəri əlavə edildi: ${customer.fullName} (${customer.phone})`,
       newData: customer,
     });
 
@@ -394,7 +487,7 @@ router.put('/customers/:id', authMiddleware, requirePermission('edit_customer'),
       return res.status(403).json({ error: 'Bu müştərini redaktə etmək icazəniz yoxdur.' });
     }
 
-    const { firstName, lastName, phone, address, notes, latitude, longitude, accuracy, photoUrl, ownerId, status } = req.body;
+    const { firstName, lastName, phone, address, notes, latitude, longitude, accuracy, photoUrl, ownerId, status, assignedDriverId } = req.body;
 
     const oldData = { ...customer };
     const updates: Partial<CustomerRecord> & { updatedBy: string } = {
@@ -411,6 +504,28 @@ router.put('/customers/:id', authMiddleware, requirePermission('edit_customer'),
     if (accuracy !== undefined) updates.accuracy = accuracy;
     if (photoUrl !== undefined) updates.photoUrl = photoUrl;
     if (status !== undefined) updates.status = status;
+
+    let driverChanged = false;
+    let oldDriverName = customer.assignedDriverName || 'Təyin edilməyib';
+    let newDriverName = 'Təyin edilməyib';
+
+    if (assignedDriverId !== undefined && assignedDriverId !== customer.assignedDriverId) {
+      if (assignedDriverId) {
+        const d = db.getDriverById(assignedDriverId);
+        if (!d) return res.status(400).json({ error: 'Seçilmiş sürücü tapılmadı.' });
+        updates.assignedDriverId = d.id;
+        updates.assignedDriverName = d.name;
+        updates.assignedAt = new Date().toISOString();
+        updates.assignedBy = req.user!.id;
+        newDriverName = d.name;
+      } else {
+        updates.assignedDriverId = null;
+        updates.assignedDriverName = null;
+        updates.assignedAt = null;
+        updates.assignedBy = null;
+      }
+      driverChanged = true;
+    }
 
     // OWNER CHANGE: Only ADMIN can change owner!
     let ownerChanged = false;
@@ -434,12 +549,36 @@ router.put('/customers/:id', authMiddleware, requirePermission('edit_customer'),
 
     const updated = db.updateCustomer(customer.id, updates);
 
+    if (driverChanged) {
+      db.addLog({
+        userId: req.user!.id,
+        userName: req.user!.name,
+        role: req.user!.role,
+        actionType: 'DRIVER_ASSIGN',
+        action: updated.assignedDriverId 
+          ? `${updated.fullName} müştərisi sürücü ${newDriverName}-ə təyin edildi`
+          : `${updated.fullName} müştərisindən sürücü təyinatı silindi`,
+        entityType: 'ASSIGNMENT',
+        entityId: customer.id,
+        customerId: customer.id,
+        customerName: updated.fullName,
+        driverId: updated.assignedDriverId || undefined,
+        driverName: updated.assignedDriverName || undefined,
+        details: updated.assignedDriverId 
+          ? `${req.user!.name} tərəfindən ${updated.fullName} müştərisi sürücü ${newDriverName}-ə təyin edildi.`
+          : `${req.user!.name} tərəfindən ${updated.fullName} müştərisinin sürücü təyinatı ləğv edildi.`,
+        oldData: { driver: oldDriverName },
+        newData: { driver: newDriverName },
+      });
+    }
+
     if (ownerChanged) {
       db.addLog({
         userId: req.user!.id,
         userName: req.user!.name,
         role: req.user!.role,
-        action: 'CHANGE_OWNER',
+        actionType: 'CHANGE_OWNER',
+        action: `Müştərinin sahibi dəyişdirildi: ${updated.fullName}`,
         entityType: 'CUSTOMER',
         entityId: customer.id,
         customerId: customer.id,
@@ -448,16 +587,19 @@ router.put('/customers/:id', authMiddleware, requirePermission('edit_customer'),
         oldData: { ownerId: oldData.ownerId, ownerName: oldOwnerName },
         newData: { ownerId: updated.ownerId, ownerName: newOwnerName },
       });
-    } else {
+    } else if (!driverChanged) {
       db.addLog({
         userId: req.user!.id,
         userName: req.user!.name,
         role: req.user!.role,
-        action: 'UPDATE_CUSTOMER',
+        actionType: 'CUSTOMER_UPDATE',
+        action: `Müştəri məlumatı yeniləndi: ${updated.fullName}`,
         entityType: 'CUSTOMER',
         entityId: customer.id,
         customerId: customer.id,
         customerName: updated.fullName,
+        driverId: updated.assignedDriverId || undefined,
+        driverName: updated.assignedDriverName || undefined,
         details: `${req.user!.name} müştəri məlumatlarını yenilədi: ${updated.fullName}`,
         oldData,
         newData: updated,
@@ -467,6 +609,198 @@ router.put('/customers/:id', authMiddleware, requirePermission('edit_customer'),
     return res.json({ customer: updated });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Müştəri yenilənərkən xəta baş verdi.' });
+  }
+});
+
+// Quick Driver Assignment
+router.post('/customers/:id/assign-driver', authMiddleware, requirePermission('edit_customer'), (req: AuthRequest, res) => {
+  try {
+    const customer = db.getCustomerById(req.params.id);
+    if (!customer) {
+      return res.status(404).json({ error: 'Müştəri tapılmadı.' });
+    }
+
+    if (req.user!.role === 'USER' && customer.ownerId !== req.user!.id) {
+      return res.status(403).json({ error: 'Bu müştərini idarə etmək icazəniz yoxdur.' });
+    }
+
+    const { driverId, notes } = req.body;
+    let updated = db.assignDriver(customer.id, driverId || null, req.user!.id);
+    const driver = driverId ? db.getDriverById(driverId) : null;
+
+    let deliveryRecord = null;
+    if (driverId && driver) {
+      deliveryRecord = db.createDelivery({
+        customerId: customer.id,
+        driverId: driver.id,
+        assignedBy: req.user!.id,
+        notes: notes || undefined,
+        status: 'assigned',
+      });
+      // reload updated customer
+      updated = db.getCustomerById(customer.id) || updated;
+    }
+
+    db.addLog({
+      userId: req.user!.id,
+      userName: req.user!.name,
+      role: req.user!.role,
+      actionType: 'DRIVER_ASSIGN',
+      action: driver 
+        ? `${updated.fullName} müştərisi sürücü ${driver.name}-ə təyin edildi`
+        : `${updated.fullName} müştərisindən sürücü təyinatı silindi`,
+      entityType: 'ASSIGNMENT',
+      entityId: customer.id,
+      customerId: customer.id,
+      customerName: updated.fullName,
+      driverId: driver?.id,
+      driverName: driver?.name,
+      details: driver 
+        ? `${req.user!.name} tərəfindən ${updated.fullName} müştərisi sürücü ${driver.name}-ə təyin edildi.`
+        : `${req.user!.name} tərəfindən ${updated.fullName} müştərisindən sürücü təyinatı silindi.`,
+    });
+
+    return res.json({ customer: updated });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Sürücü təyin edilə bilmədi.' });
+  }
+});
+
+// Send Location to Driver
+router.post('/customers/:id/send-location-to-driver', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const customer = db.getCustomerById(req.params.id);
+    if (!customer) return res.status(404).json({ error: 'Müştəri tapılmadı.' });
+
+    const targetDriverId = req.body.driverId || customer.assignedDriverId;
+    if (!targetDriverId) {
+      return res.status(400).json({ error: 'Müştəriyə təyin olunmuş və ya seçilmiş sürücü yoxdur.' });
+    }
+
+    const driver = db.getDriverById(targetDriverId);
+    if (!driver) return res.status(404).json({ error: 'Sürücü tapılmadı.' });
+
+    db.addLog({
+      userId: req.user!.id,
+      userName: req.user!.name,
+      role: req.user!.role,
+      actionType: 'LOCATION_SENT_DRIVER',
+      action: `${customer.fullName} müştərisinin konumu sürücü ${driver.name}-ə göndərildi`,
+      entityType: 'CUSTOMER',
+      entityId: customer.id,
+      customerId: customer.id,
+      customerName: customer.fullName,
+      driverId: driver.id,
+      driverName: driver.name,
+      details: `${customer.fullName} (${customer.address || 'Ünvan qeyd edilməyib'}) müştərisinin konumu sürücü ${driver.name}-ə göndərildi.`,
+    });
+
+    return res.json({
+      success: true,
+      message: `${customer.fullName} müştərisinin konumu sürücü ${driver.name}-ə göndərildi.`,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Konum göndərilərkən xəta baş verdi.' });
+  }
+});
+
+// Send Location to Customer
+router.post('/customers/:id/send-location-to-customer', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const customer = db.getCustomerById(req.params.id);
+    if (!customer) return res.status(404).json({ error: 'Müştəri tapılmadı.' });
+
+    db.addLog({
+      userId: req.user!.id,
+      userName: req.user!.name,
+      role: req.user!.role,
+      actionType: 'LOCATION_SENT_CUSTOMER',
+      action: `Müştəriyə konum göndərildi: ${customer.fullName}`,
+      entityType: 'CUSTOMER',
+      entityId: customer.id,
+      customerId: customer.id,
+      customerName: customer.fullName,
+      details: `${customer.fullName} (${customer.phone}) adlı müştəriyə konum məlumatı göndərildi.`,
+    });
+
+    return res.json({
+      success: true,
+      message: `Müştəriyə konum göndərildi: ${customer.fullName}`,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Xəta baş verdi.' });
+  }
+});
+
+// Direct "Təhvil verdim" from customer card
+router.post('/customers/:id/deliver', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const customer = db.getCustomerById(req.params.id);
+    if (!customer) {
+      return res.status(404).json({ error: 'Müştəri tapılmadı.' });
+    }
+
+    const { note } = req.body;
+    const isDriver = req.user!.role === 'DRIVER';
+    const isAdmin = req.user!.role === 'ADMIN';
+
+    if (!isDriver && !isAdmin) {
+      return res.status(403).json({ error: 'Yalnız sürücü və ya admin təhvil verə bilər.' });
+    }
+
+    // Check existing deliveries for customer
+    const existing = db.getDeliveries({ customerId: customer.id });
+    const activeDelivery = existing.find(d => d.status !== 'delivered');
+
+    if (!activeDelivery && customer.currentDeliveryStatus === 'delivered') {
+      return res.status(400).json({ error: 'Bu müştərinin malı artıq təhvil verilib.' });
+    }
+
+    let updatedDelivery;
+    if (activeDelivery) {
+      if (isDriver && activeDelivery.driverId !== req.user!.id) {
+        return res.status(403).json({ error: 'Bu çatdırılma başqa sürücüyə təyin olunub.' });
+      }
+      updatedDelivery = db.deliverDelivery(activeDelivery.id, req.user!.id, req.user!.name, note);
+    } else {
+      // Create new delivery and immediately deliver
+      const driverId = isDriver ? req.user!.id : (customer.assignedDriverId || req.user!.id);
+      const newD = db.createDelivery({
+        customerId: customer.id,
+        driverId,
+        assignedBy: req.user!.id,
+        notes: note,
+        status: 'assigned',
+      });
+      updatedDelivery = db.deliverDelivery(newD.id, req.user!.id, req.user!.name, note);
+    }
+
+    const freshCustomer = db.getCustomerById(customer.id);
+
+    db.addLog({
+      userId: req.user!.id,
+      userName: req.user!.name,
+      role: req.user!.role,
+      actionType: 'DELIVERY',
+      action: `Mal təhvil verildi: ${customer.fullName} (${updatedDelivery.driverName})`,
+      entityType: 'CUSTOMER',
+      entityId: customer.id,
+      customerId: customer.id,
+      customerName: customer.fullName,
+      driverId: updatedDelivery.driverId,
+      driverName: updatedDelivery.driverName,
+      details: `Sürücü ${req.user!.name} ${customer.fullName} müştərisinin malını təhvil verdi.${note ? ` Qeyd: ${note}` : ''}`,
+      newData: updatedDelivery,
+    });
+
+    return res.json({
+      success: true,
+      customer: freshCustomer,
+      delivery: updatedDelivery,
+      message: `${customer.fullName} üçün mal təhvil verildi olaraq qeyd edildi.`,
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Təhvil vermə zamanı xəta baş verdi.' });
   }
 });
 
@@ -488,11 +822,14 @@ router.delete('/customers/:id', authMiddleware, requirePermission('delete_custom
       userId: req.user!.id,
       userName: req.user!.name,
       role: req.user!.role,
-      action: 'DELETE_CUSTOMER',
+      actionType: 'CUSTOMER_DELETE',
+      action: `Müştəri silindi: ${customer.fullName}`,
       entityType: 'CUSTOMER',
       entityId: customer.id,
       customerId: customer.id,
       customerName: customer.fullName,
+      driverId: customer.assignedDriverId || undefined,
+      driverName: customer.assignedDriverName || undefined,
       details: `${req.user!.name} müştərini sildi (Zibil qutusuna köçürüldü): ${customer.fullName}`,
     });
 
@@ -503,21 +840,15 @@ router.delete('/customers/:id', authMiddleware, requirePermission('delete_custom
 });
 
 // -------------------------------------------------------------
-// 4. TRASH & RESTORE
+// 4. TRASH & RESTORE (Strictly ADMIN ONLY per Requirement 5)
 // -------------------------------------------------------------
 
-router.get('/trash', authMiddleware, (req: AuthRequest, res) => {
+router.get('/trash', authMiddleware, requireRole('ADMIN'), (req: AuthRequest, res) => {
   try {
-    const role = req.user!.role;
     const all = db.getCustomers(true).filter(c => c.isDeleted);
     const usersMap = new Map(db.getUsers().map(u => [u.id, u.name]));
 
-    let list = all;
-    if (role === 'USER') {
-      list = all.filter(c => c.ownerId === req.user!.id);
-    }
-
-    const enriched = list.map(c => ({
+    const enriched = all.map(c => ({
       ...c,
       ownerName: usersMap.get(c.ownerId) || 'Bilinməyən',
       deletedByName: c.deletedBy ? usersMap.get(c.deletedBy) || 'İstifadəçi' : 'Naməlum',
@@ -529,14 +860,11 @@ router.get('/trash', authMiddleware, (req: AuthRequest, res) => {
   }
 });
 
-router.post('/customers/:id/restore', authMiddleware, (req: AuthRequest, res) => {
+router.post('/customers/:id/restore', authMiddleware, requireRole('ADMIN'), (req: AuthRequest, res) => {
   try {
     const customer = db.getCustomerById(req.params.id);
     if (!customer) {
       return res.status(404).json({ error: 'Müştəri tapılmadı.' });
-    }
-    if (req.user!.role === 'USER' && customer.ownerId !== req.user!.id) {
-      return res.status(403).json({ error: 'Bu müştərini bərpa etmək icazəniz yoxdur.' });
     }
 
     const restored = db.restoreCustomer(customer.id, req.user!.id);
@@ -545,12 +873,13 @@ router.post('/customers/:id/restore', authMiddleware, (req: AuthRequest, res) =>
       userId: req.user!.id,
       userName: req.user!.name,
       role: req.user!.role,
-      action: 'RESTORE_CUSTOMER',
+      actionType: 'CUSTOMER_RESTORE',
+      action: `Müştəri bərpa edildi: ${customer.fullName}`,
       entityType: 'CUSTOMER',
       entityId: customer.id,
       customerId: customer.id,
       customerName: customer.fullName,
-      details: `${req.user!.name} müştərini bərpa etdi: ${customer.fullName}`,
+      details: `Admin müştərini bərpa etdi: ${customer.fullName}`,
     });
 
     return res.json({ success: true, customer: restored });
@@ -572,15 +901,18 @@ router.delete('/customers/:id/permanent', authMiddleware, requireRole('ADMIN'), 
       userId: req.user!.id,
       userName: req.user!.name,
       role: 'ADMIN',
-      action: 'PERMANENT_DELETE_CUSTOMER',
+      actionType: 'PERMANENT_DELETE_CUSTOMER',
+      action: `Müştəri həmişəlik silindi: ${customer.fullName}`,
       entityType: 'CUSTOMER',
       entityId: customer.id,
+      customerId: customer.id,
+      customerName: customer.fullName,
       details: `Admin müştərini həmişəlik sildi: ${customer.fullName}`,
     });
 
     return res.json({ success: true, message: 'Müştəri həmişəlik silindi.' });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message || 'Xəta baş verdi.' });
+    return res.status(500).json({ error: err.message || 'Müştəri həmişəlik silinmədi.' });
   }
 });
 
@@ -615,7 +947,7 @@ router.get('/users', authMiddleware, requireRole('ADMIN'), (req: AuthRequest, re
 
 router.post('/users', authMiddleware, requireRole('ADMIN'), (req: AuthRequest, res) => {
   try {
-    const { loginId, password, name, role, status, permissions } = req.body;
+    const { loginId, password, name, phone, role, status, permissions } = req.body;
     if (!loginId || !password || !name) {
       return res.status(400).json({ error: 'İstifadəçi ID, şifrə və ad tələb olunur.' });
     }
@@ -624,6 +956,7 @@ router.post('/users', authMiddleware, requireRole('ADMIN'), (req: AuthRequest, r
       loginId,
       password,
       name,
+      phone,
       role: role || 'USER',
       status: status || 'active',
       permissions,
@@ -633,7 +966,8 @@ router.post('/users', authMiddleware, requireRole('ADMIN'), (req: AuthRequest, r
       userId: req.user!.id,
       userName: req.user!.name,
       role: 'ADMIN',
-      action: 'CREATE_USER',
+      actionType: 'CREATE_USER',
+      action: `Yeni istifadəçi yaradıldı: ${newUser.name}`,
       entityType: 'USER',
       entityId: newUser.id,
       details: `Admin yeni istifadəçi yaratdı: ${newUser.name} (${newUser.loginId}) [Rol: ${newUser.role}]`,
@@ -644,6 +978,7 @@ router.post('/users', authMiddleware, requireRole('ADMIN'), (req: AuthRequest, r
         id: newUser.id,
         loginId: newUser.loginId,
         name: newUser.name,
+        phone: newUser.phone,
         role: newUser.role,
         status: newUser.status,
         permissions: newUser.permissions,
@@ -657,7 +992,7 @@ router.post('/users', authMiddleware, requireRole('ADMIN'), (req: AuthRequest, r
 
 router.put('/users/:id', authMiddleware, requireRole('ADMIN'), (req: AuthRequest, res) => {
   try {
-    const { name, password, role, status, permissions } = req.body;
+    const { name, phone, password, role, status, permissions } = req.body;
     const user = db.getUserById(req.params.id);
     if (!user) {
       return res.status(404).json({ error: 'İstifadəçi tapılmadı.' });
@@ -665,6 +1000,7 @@ router.put('/users/:id', authMiddleware, requireRole('ADMIN'), (req: AuthRequest
 
     const updated = db.updateUser(user.id, {
       name,
+      phone,
       password: password && password.trim().length > 0 ? password.trim() : undefined,
       role,
       status,
@@ -675,7 +1011,8 @@ router.put('/users/:id', authMiddleware, requireRole('ADMIN'), (req: AuthRequest
       userId: req.user!.id,
       userName: req.user!.name,
       role: 'ADMIN',
-      action: 'UPDATE_USER',
+      actionType: 'UPDATE_USER',
+      action: `İstifadəçi redaktə edildi: ${updated.name}`,
       entityType: 'USER',
       entityId: updated.id,
       details: `Admin istifadəçini redaktə etdi: ${updated.name} (${updated.loginId})`,
@@ -686,6 +1023,7 @@ router.put('/users/:id', authMiddleware, requireRole('ADMIN'), (req: AuthRequest
         id: updated.id,
         loginId: updated.loginId,
         name: updated.name,
+        phone: updated.phone,
         role: updated.role,
         status: updated.status,
         permissions: updated.permissions,
@@ -824,12 +1162,12 @@ router.delete('/drivers/:id', authMiddleware, requireRole('ADMIN'), (req: AuthRe
 });
 
 // -------------------------------------------------------------
-// 7. AUDIT LOGS
+// 7. AUDIT LOGS & BUSINESS OPERATIONS
 // -------------------------------------------------------------
 
 router.get('/logs', authMiddleware, (req: AuthRequest, res) => {
   try {
-    const { search, action, entityType } = req.query;
+    const { search, action, entityType, date, userId, customerId, driverId, actionType } = req.query;
     let logs = db.getLogs();
 
     // Normal USER can only see own logs
@@ -842,8 +1180,23 @@ router.get('/logs', authMiddleware, (req: AuthRequest, res) => {
     if (action && typeof action === 'string') {
       logs = logs.filter(l => l.action === action);
     }
+    if (actionType && typeof actionType === 'string') {
+      logs = logs.filter(l => l.actionType === actionType);
+    }
     if (entityType && typeof entityType === 'string') {
       logs = logs.filter(l => l.entityType === entityType);
+    }
+    if (date && typeof date === 'string') {
+      logs = logs.filter(l => l.createdAt.startsWith(date));
+    }
+    if (userId && typeof userId === 'string') {
+      logs = logs.filter(l => l.userId === userId);
+    }
+    if (customerId && typeof customerId === 'string') {
+      logs = logs.filter(l => l.customerId === customerId);
+    }
+    if (driverId && typeof driverId === 'string') {
+      logs = logs.filter(l => l.driverId === driverId);
     }
     if (search && typeof search === 'string' && search.trim()) {
       const q = azNormalize(search);
@@ -851,13 +1204,35 @@ router.get('/logs', authMiddleware, (req: AuthRequest, res) => {
         azNormalize(l.details).includes(q) ||
         azNormalize(l.userName).includes(q) ||
         azNormalize(l.action).includes(q) ||
-        azNormalize(l.customerName || '').includes(q)
+        azNormalize(l.customerName || '').includes(q) ||
+        azNormalize(l.driverName || '').includes(q)
       );
     }
 
     return res.json({ logs });
   } catch (err: any) {
     return res.status(500).json({ error: 'Tarixçə yüklənmədi.' });
+  }
+});
+
+// Business Operations endpoint (NO AUTH / SESSION logs included)
+router.get('/operations', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const { search, date, user, customer, driver, actionType } = req.query;
+    const operations = db.getOperations({
+      userRole: req.user!.role,
+      userId: req.user!.id,
+      date: typeof date === 'string' ? date : undefined,
+      userFilter: typeof user === 'string' ? user : undefined,
+      customerFilter: typeof customer === 'string' ? customer : undefined,
+      driverFilter: typeof driver === 'string' ? driver : undefined,
+      actionType: typeof actionType === 'string' ? actionType : undefined,
+      search: typeof search === 'string' ? search : undefined,
+    });
+
+    return res.json({ operations });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Əməliyyatlar yüklənərkən xəta baş verdi.' });
   }
 });
 
@@ -984,5 +1359,241 @@ router.post('/backup/restore', authMiddleware, requirePermission('restore_data')
     return res.json({ success: true, count: restoredCount, message: `${restoredCount} müştəri uğurla bərpa olundu.` });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Restore zamanı xəta baş verdi.' });
+  }
+});
+
+// -------------------------------------------------------------
+// 10. DELIVERIES API (Task redirection, status flow, delivery history)
+// -------------------------------------------------------------
+
+router.get('/deliveries', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const { driverId, customerId, ownerId, status, date, search } = req.query;
+    const role = req.user!.role;
+    const currentUserId = req.user!.id;
+
+    const filterOptions: any = {};
+    if (search && typeof search === 'string') filterOptions.search = search;
+    if (date && typeof date === 'string') filterOptions.date = date;
+    if (status && typeof status === 'string') filterOptions.status = status;
+    if (customerId && typeof customerId === 'string') filterOptions.customerId = customerId;
+
+    if (role === 'USER') {
+      // User can ONLY see deliveries for their customers
+      filterOptions.ownerId = currentUserId;
+      if (driverId && typeof driverId === 'string') filterOptions.driverId = driverId;
+    } else if (role === 'DRIVER') {
+      // Driver sees their assigned deliveries
+      filterOptions.driverId = currentUserId;
+    } else {
+      // Admin can filter by anything
+      if (driverId && typeof driverId === 'string') filterOptions.driverId = driverId;
+      if (ownerId && typeof ownerId === 'string') filterOptions.ownerId = ownerId;
+    }
+
+    const deliveries = db.getDeliveries(filterOptions);
+
+    // Driver breakdown stats
+    const driverStatsMap: Record<string, { driverId: string; driverName: string; count: number; deliveredCount: number }> = {};
+    for (const d of deliveries) {
+      if (!driverStatsMap[d.driverId]) {
+        driverStatsMap[d.driverId] = { driverId: d.driverId, driverName: d.driverName, count: 0, deliveredCount: 0 };
+      }
+      driverStatsMap[d.driverId].count++;
+      if (d.status === 'delivered') {
+        driverStatsMap[d.driverId].deliveredCount++;
+      }
+    }
+
+    return res.json({
+      deliveries,
+      driverStats: Object.values(driverStatsMap),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Çatdırılmalar yüklənərkən xəta baş verdi.' });
+  }
+});
+
+router.post('/deliveries', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const { customerId, driverId, notes, status } = req.body;
+    if (!customerId || !driverId) {
+      return res.status(400).json({ error: 'Müştəri və sürücü seçilməlidir.' });
+    }
+
+    const customer = db.getCustomerById(customerId);
+    if (!customer) {
+      return res.status(404).json({ error: 'Müştəri tapılmadı.' });
+    }
+
+    // Role check: USER can only dispatch their own customers
+    if (req.user!.role === 'USER' && customer.ownerId !== req.user!.id) {
+      return res.status(403).json({ error: 'Yalnız öz müştərilərinizi sürücüyə yönləndirə bilərsiniz.' });
+    }
+
+    // DRIVER cannot dispatch deliveries
+    if (req.user!.role === 'DRIVER') {
+      return res.status(403).json({ error: 'Sürücü vəzifə yönləndirə bilməz.' });
+    }
+
+    const delivery = db.createDelivery({
+      customerId,
+      driverId,
+      assignedBy: req.user!.id,
+      notes,
+      status: status || 'assigned',
+    });
+
+    db.addLog({
+      userId: req.user!.id,
+      userName: req.user!.name,
+      role: req.user!.role,
+      actionType: 'ASSIGNMENT',
+      action: `Vəzifə yönləndirildi: ${delivery.customerName} → ${delivery.driverName}`,
+      entityType: 'DELIVERY',
+      entityId: delivery.id,
+      customerId: delivery.customerId,
+      customerName: delivery.customerName,
+      driverId: delivery.driverId,
+      driverName: delivery.driverName,
+      details: `${req.user!.name} tərəfindən ${delivery.customerName} üçün tapşırıq sürücü ${delivery.driverName}-a yönləndirildi.`,
+      newData: delivery,
+    });
+
+    return res.status(201).json({ delivery });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Çatdırılma yaradılarkən xəta baş verdi.' });
+  }
+});
+
+router.post('/deliveries/:id/start', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const delivery = db.getDeliveryById(req.params.id);
+    if (!delivery) {
+      return res.status(404).json({ error: 'Çatdırılma tapılmadı.' });
+    }
+
+    // Driver can only start their own delivery, Admin can start any
+    if (req.user!.role === 'DRIVER' && delivery.driverId !== req.user!.id) {
+      return res.status(403).json({ error: 'Bu çatdırılmanı başlatmaq hüququnuz yoxdur.' });
+    }
+
+    const updated = db.startDelivery(delivery.id, req.user!.id, req.user!.name);
+
+    db.addLog({
+      userId: req.user!.id,
+      userName: req.user!.name,
+      role: req.user!.role,
+      actionType: 'DELIVERY',
+      action: `Yoldadır: ${updated.customerName} (${updated.driverName})`,
+      entityType: 'DELIVERY',
+      entityId: updated.id,
+      customerId: updated.customerId,
+      customerName: updated.customerName,
+      driverId: updated.driverId,
+      driverName: updated.driverName,
+      details: `Sürücü ${req.user!.name} ${updated.customerName} sifarişi üçün yola çıxdı.`,
+      newData: updated,
+    });
+
+    return res.json({ delivery: updated });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Çatdırılma başladılarkən xəta baş verdi.' });
+  }
+});
+
+router.post('/deliveries/:id/deliver', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const delivery = db.getDeliveryById(req.params.id);
+    if (!delivery) {
+      return res.status(404).json({ error: 'Çatdırılma tapılmadı.' });
+    }
+
+    // Requirement 11: Eyni işi iki dəfə “Təhvil verdim” etmək mümkün olmasın
+    if (delivery.status === 'delivered') {
+      return res.status(400).json({ error: 'Bu çatdırılma artıq təhvil verilib.' });
+    }
+
+    // Driver can only deliver their own delivery, Admin can deliver any
+    if (req.user!.role === 'DRIVER' && delivery.driverId !== req.user!.id) {
+      return res.status(403).json({ error: 'Bu çatdırılmanı təhvil vermək hüququnuz yoxdur.' });
+    }
+
+    const { note } = req.body;
+    const updated = db.deliverDelivery(delivery.id, req.user!.id, req.user!.name, note);
+
+    db.addLog({
+      userId: req.user!.id,
+      userName: req.user!.name,
+      role: req.user!.role,
+      actionType: 'DELIVERY',
+      action: `Mal təhvil verildi: ${updated.customerName} (${updated.driverName})`,
+      entityType: 'DELIVERY',
+      entityId: updated.id,
+      customerId: updated.customerId,
+      customerName: updated.customerName,
+      driverId: updated.driverId,
+      driverName: updated.driverName,
+      details: `Sürücü ${req.user!.name} ${updated.customerName} müştərisinin malını təhvil verdi.`,
+      newData: updated,
+    });
+
+    return res.json({ delivery: updated });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Təhvil vermə zamanı xəta baş verdi.' });
+  }
+});
+
+router.get('/deliveries/driver-stats', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const targetDriverId = req.query.driverId as string || (req.user!.role === 'DRIVER' ? req.user!.id : undefined);
+    if (!targetDriverId) {
+      return res.status(400).json({ error: 'Sürücü ID tələb olunur.' });
+    }
+    const stats = db.getDriverStats(targetDriverId);
+    return res.json({ stats });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Sürücü statistikası yüklənmədi.' });
+  }
+});
+
+// -------------------------------------------------------------
+// 11. NOTIFICATIONS API
+// -------------------------------------------------------------
+
+router.get('/notifications', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const notifications = db.getNotifications(req.user!.id);
+    const unreadCount = db.getUnreadNotificationCount(req.user!.id);
+    return res.json({ notifications, unreadCount });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Bildirişlər yüklənərkən xəta baş verdi.' });
+  }
+});
+
+router.get('/notifications/unread-count', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const unreadCount = db.getUnreadNotificationCount(req.user!.id);
+    return res.json({ unreadCount });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Xəta baş verdi.' });
+  }
+});
+
+router.post('/notifications/:id/read', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const success = db.markNotificationAsRead(req.params.id, req.user!.id);
+    return res.json({ success });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Xəta baş verdi.' });
+  }
+});
+
+router.post('/notifications/read-all', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const count = db.markAllNotificationsAsRead(req.user!.id);
+    return res.json({ success: true, count });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Xəta baş verdi.' });
   }
 });

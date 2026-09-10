@@ -40,8 +40,24 @@ export const TrashPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchTrash();
-  }, []);
+    if (isAdmin) {
+      fetchTrash();
+    }
+  }, [isAdmin]);
+
+  if (!isAdmin) {
+    return (
+      <div className="p-10 text-center bg-white dark:bg-slate-900 rounded-3xl border border-rose-200 dark:border-rose-900/40 max-w-lg mx-auto my-12 shadow-sm">
+        <div className="w-14 h-14 bg-rose-50 dark:bg-rose-950/60 text-rose-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <AlertTriangle className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white">Giriş İcazəsi Yoxdur</h2>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
+          Zibil qutusu yalnız Administrator üçün əlçatandır. Adi istifadəçilər və sürücülər bu bölməyə daxil ola bilməz.
+        </p>
+      </div>
+    );
+  }
 
   const handleRestoreConfirm = async () => {
     if (!customerToRestore) return;
