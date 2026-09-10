@@ -35,7 +35,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Müştəri GPS Server running on http://0.0.0.0:${PORT}`);
+    console.log(`Məkan Server running on http://0.0.0.0:${PORT}`);
   });
 }
 

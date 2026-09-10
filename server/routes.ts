@@ -1285,7 +1285,7 @@ router.get('/backup/export', authMiddleware, requirePermission('backup_data'), (
     }
 
     const backupPayload = {
-      system: 'Müştəri GPS',
+      system: 'Məkan',
       version: '1.0.0',
       exportedAt: new Date().toISOString(),
       exportedBy: {
