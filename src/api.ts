@@ -1,4 +1,4 @@
-import { User, Customer, Driver, AuditLog, DashboardStats, Delivery, NotificationItem } from './types';
+import { User, Customer, Driver, AuditLog, DashboardStats, Delivery, NotificationItem, Order, ExecutorType } from './types';
 
 const TOKEN_KEY = 'mustari_gps_auth_token';
 
@@ -301,4 +301,67 @@ export const api = {
     request<{ success: boolean; count: number }>('/api/notifications/read-all', {
       method: 'POST',
     }),
+
+  // ==========================================
+  // --- ORDERS API (SİFARİŞLƏR SİSTEMİ) ---
+  // ==========================================
+  getOrders: (params?: {
+    status?: string;
+    search?: string;
+    date?: string;
+    driverId?: string;
+    creatorId?: string;
+    ownerId?: string;
+    filterMode?: 'all' | 'open' | 'my_orders';
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set('status', params.status);
+    if (params?.search) q.set('search', params.search);
+    if (params?.date) q.set('date', params.date);
+    if (params?.driverId) q.set('driverId', params.driverId);
+    if (params?.creatorId) q.set('creatorId', params.creatorId);
+    if (params?.ownerId) q.set('ownerId', params.ownerId);
+    if (params?.filterMode) q.set('filterMode', params.filterMode);
+    return request<{ orders: Order[] }>(`/api/orders?${q.toString()}`);
+  },
+
+  getOrderById: (id: string) =>
+    request<{ order: Order }>(`/api/orders/${id}`),
+
+  createOrder: (data: { customerId: string; notes?: string; dispatchType?: ExecutorType | null }) =>
+    request<{ order: Order; message: string }>('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  dispatchOrder: (id: string, dispatchType: ExecutorType) =>
+    request<{ order: Order; message: string }>(`/api/orders/${id}/dispatch`, {
+      method: 'POST',
+      body: JSON.stringify({ dispatchType }),
+    }),
+
+  claimOrder: (id: string) =>
+    request<{ order: Order; message: string }>(`/api/orders/${id}/claim`, {
+      method: 'POST',
+    }),
+
+  startOrder: (id: string) =>
+    request<{ order: Order; message: string }>(`/api/orders/${id}/start`, {
+      method: 'POST',
+    }),
+
+  updateOrderLocation: (id: string, location: { latitude: number; longitude: number; speed?: number | null; accuracy?: number | null }) =>
+    request<{ success: boolean; location: any }>(`/api/orders/${id}/location`, {
+      method: 'POST',
+      body: JSON.stringify(location),
+    }),
+
+  deliverOrder: (id: string, data?: { note?: string; latitude?: number; longitude?: number; accuracy?: number }) =>
+    request<{ order: Order; message: string }>(`/api/orders/${id}/deliver`, {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    }),
+
+  getOrderDashboardStats: () =>
+    request<{ stats: any }>('/api/orders/dashboard/stats'),
 };

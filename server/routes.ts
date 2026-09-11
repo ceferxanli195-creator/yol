@@ -1597,3 +1597,275 @@ router.post('/notifications/read-all', authMiddleware, (req: AuthRequest, res) =
     return res.status(500).json({ error: 'Xəta baş verdi.' });
   }
 });
+
+// -------------------------------------------------------------
+// 12. ORDERS & DELIVERY WORKFLOW API (SİFARİŞLƏR SİSTEMİ)
+// -------------------------------------------------------------
+
+// Get Orders list with role-based filtering
+router.get('/orders', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const currentUser = req.user!;
+    const { status, search, date, driverId, creatorId, ownerId, filterMode } = req.query as Record<string, string>;
+
+    const params: any = {};
+    if (search) params.search = search;
+    if (date) params.date = date;
+    if (status && status !== 'all') params.status = status;
+
+    if (currentUser.role === 'DRIVER') {
+      // Driver view:
+      if (filterMode === 'open') {
+        params.status = 'open_for_drivers';
+      } else if (filterMode === 'my_orders') {
+        params.driverId = currentUser.id;
+      } else if (driverId) {
+        params.driverId = driverId;
+      }
+    } else if (currentUser.role === 'USER') {
+      // User view: can view their own created/owned orders, or filter
+      if (creatorId) {
+        params.creatorId = creatorId;
+      } else if (ownerId) {
+        params.ownerId = ownerId;
+      } else {
+        // By default, user sees orders they created or their customers' orders
+        params.creatorId = currentUser.id;
+      }
+    } else if (currentUser.role === 'ADMIN') {
+      if (creatorId) params.creatorId = creatorId;
+      if (ownerId) params.ownerId = ownerId;
+      if (driverId) params.driverId = driverId;
+    }
+
+    const orders = db.getOrders(params);
+    return res.json({ orders });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Sifarişlər yüklənərkən xəta baş verdi.' });
+  }
+});
+
+// Order Dashboard stats (Requirement 21)
+router.get('/orders/dashboard/stats', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const stats = db.getOrderDashboardStats(req.user!);
+    return res.json({ stats });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Statistika yüklənmədi.' });
+  }
+});
+
+// Get Order Details
+router.get('/orders/:id', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const order = db.getOrderById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Sifariş tapılmadı.' });
+    }
+    return res.json({ order });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Sifariş məlumatı yüklənmədi.' });
+  }
+});
+
+// Create Order (Requirement 1, 2, 3: "Sifariş var" düyməsi)
+router.post('/orders', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const currentUser = req.user!;
+    if (currentUser.role === 'DRIVER') {
+      return res.status(403).json({ error: 'Sürücü sifariş yarada bilməz.' });
+    }
+
+    const { customerId, notes, dispatchType } = req.body;
+    if (!customerId) {
+      return res.status(400).json({ error: 'Müştəri ID tələb olunur.' });
+    }
+
+    const order = db.createOrder({
+      customerId,
+      creatorId: currentUser.id,
+      creatorName: currentUser.name,
+      creatorRole: currentUser.role,
+      notes,
+      dispatchType: dispatchType || null,
+    });
+
+    return res.status(201).json({ order, message: `Sifariş #${order.orderNumber} uğurla yaradıldı.` });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Sifariş yaradılarkən xəta baş verdi.' });
+  }
+});
+
+// Dispatch Order: User selects "Mən aparacam" (USER) or "Sürücü aparsın" (DRIVER)
+router.post('/orders/:id/dispatch', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const currentUser = req.user!;
+    const { dispatchType } = req.body;
+
+    if (dispatchType !== 'USER' && dispatchType !== 'DRIVER') {
+      return res.status(400).json({ error: 'İcraçı növü düzgün seçilməyib.' });
+    }
+
+    const order = db.getOrderById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Sifariş tapılmadı.' });
+    }
+
+    // Only creator or admin can dispatch
+    if (currentUser.role !== 'ADMIN' && order.creatorId !== currentUser.id) {
+      return res.status(403).json({ error: 'Bu sifarişin icraçısını seçmək hüququnuz yoxdur.' });
+    }
+
+    const updated = db.dispatchOrder(
+      order.id,
+      dispatchType,
+      currentUser.id,
+      currentUser.name,
+      currentUser.role
+    );
+
+    return res.json({ order: updated, message: dispatchType === 'USER' ? 'Sifarişi siz özünüz aparacaqsınız.' : 'Sifariş aktiv sürücülərə yönləndirildi.' });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Xəta baş verdi.' });
+  }
+});
+
+// Driver claims order: [ Mən aparacam ] (Requirement 5 & 6 with atomic race protection)
+router.post('/orders/:id/claim', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const currentUser = req.user!;
+    if (currentUser.role !== 'DRIVER' && currentUser.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Yalnız sürücülər sifarişi götürə bilər.' });
+    }
+
+    const updated = db.claimOrder(req.params.id, currentUser.id, currentUser.name);
+
+    db.addLog({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      role: currentUser.role,
+      action: 'Sifariş qəbul edildi',
+      actionType: 'ORDER_CLAIMED',
+      entityType: 'DELIVERY',
+      entityId: updated.id,
+      customerId: updated.customerId,
+      customerName: updated.customerName,
+      details: `Sürücü ${currentUser.name} #${updated.orderNumber} nömrəli sifarişi götürdü.`,
+      newData: updated,
+    });
+
+    return res.json({ order: updated, message: 'Sifariş qəbul edildi. Çatdırılmaya başlaya bilərsiniz.' });
+  } catch (err: any) {
+    // Return 409 Conflict if already claimed by someone else
+    const status = err.message?.includes('artıq başqa sürücü') ? 409 : 400;
+    return res.status(status).json({ error: err.message || 'Sifariş götürülərkən xəta baş verdi.' });
+  }
+});
+
+// Executor departs: [ Yola çıxdım ] (Requirement 8)
+router.post('/orders/:id/start', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const currentUser = req.user!;
+    const order = db.getOrderById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Sifariş tapılmadı.' });
+    }
+
+    // Must be assigned executor or admin
+    if (currentUser.role !== 'ADMIN' && order.executorId !== currentUser.id && order.driverId !== currentUser.id) {
+      return res.status(403).json({ error: 'Bu sifariş üçün yola çıxmaq hüququnuz yoxdur.' });
+    }
+
+    const updated = db.startOrder(order.id, currentUser.id, currentUser.name, currentUser.role);
+
+    db.addLog({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      role: currentUser.role,
+      action: 'Yola çıxıldı',
+      actionType: 'ORDER_DEPARTED',
+      entityType: 'DELIVERY',
+      entityId: updated.id,
+      customerId: updated.customerId,
+      customerName: updated.customerName,
+      details: `${currentUser.name} #${updated.orderNumber} nömrəli sifariş üzrə yola çıxdı.`,
+      newData: updated,
+    });
+
+    return res.json({ order: updated, message: 'Yola çıxdınız. Canlı konum paylaşılır.' });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Yola çıxılarkən xəta baş verdi.' });
+  }
+});
+
+// Live Location update (Requirement 8 & 9)
+router.post('/orders/:id/location', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const { latitude, longitude, speed, accuracy } = req.body;
+    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+      return res.status(400).json({ error: 'GPS koordinatları tələb olunur.' });
+    }
+
+    const updated = db.updateOrderLocation(req.params.id, {
+      latitude,
+      longitude,
+      speed,
+      accuracy,
+    });
+
+    return res.json({ success: true, location: updated.currentLocation });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Konum yenilənmədi.' });
+  }
+});
+
+// Executor delivers: [ Təhvil verildi ] (Requirement 13, 14, 15)
+router.post('/orders/:id/deliver', authMiddleware, (req: AuthRequest, res) => {
+  try {
+    const currentUser = req.user!;
+    const order = db.getOrderById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Sifariş tapılmadı.' });
+    }
+
+    if (order.status === 'delivered') {
+      return res.status(400).json({ error: 'Bu sifariş artıq təhvil verilib.' });
+    }
+
+    // Must be assigned executor or admin
+    if (currentUser.role !== 'ADMIN' && order.executorId !== currentUser.id && order.driverId !== currentUser.id) {
+      return res.status(403).json({ error: 'Bu sifarişi təhvil vermək hüququnuz yoxdur.' });
+    }
+
+    const { note, latitude, longitude, accuracy } = req.body;
+    const location = (typeof latitude === 'number' && typeof longitude === 'number')
+      ? { latitude, longitude, accuracy }
+      : null;
+
+    const updated = db.deliverOrder(
+      order.id,
+      currentUser.id,
+      currentUser.name,
+      location,
+      note
+    );
+
+    db.addLog({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      role: currentUser.role,
+      action: 'Sifariş təhvil verildi',
+      actionType: 'ORDER_DELIVERED',
+      entityType: 'DELIVERY',
+      entityId: updated.id,
+      customerId: updated.customerId,
+      customerName: updated.customerName,
+      details: `${currentUser.name} #${updated.orderNumber} nömrəli sifarişi müştəriyə təhvil verdi.`,
+      newData: updated,
+    });
+
+    return res.json({ order: updated, message: 'Sifariş uğurla təhvil verildi və çatdırılma tarixçəsinə əlavə edildi.' });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Təhvil vermə zamanı xəta baş verdi.' });
+  }
+});

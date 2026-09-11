@@ -10,7 +10,7 @@ import {
   collection,
   Firestore,
 } from 'firebase/firestore';
-import { CustomerRecord, UserRecord, DriverRecord, AuditLogRecord, DeliveryRecord, NotificationRecord } from './types';
+import { CustomerRecord, UserRecord, DriverRecord, AuditLogRecord, DeliveryRecord, NotificationRecord, OrderRecord } from './types';
 
 let db: Firestore | null = null;
 
@@ -135,6 +135,28 @@ export async function syncLogToFirestore(log: AuditLogRecord): Promise<void> {
   }
 }
 
+// Save order to Firestore
+export async function syncOrderToFirestore(order: OrderRecord): Promise<void> {
+  const fdb = getFirestoreDb();
+  if (!fdb) return;
+  try {
+    const docRef = doc(fdb, 'orders', order.id);
+    await setDoc(docRef, sanitizeForFirestore(order), { merge: true });
+  } catch (err) {
+    console.error(`Failed to sync order ${order.id} to Firestore:`, err);
+  }
+}
+
+export async function deleteOrderFromFirestore(id: string): Promise<void> {
+  const fdb = getFirestoreDb();
+  if (!fdb) return;
+  try {
+    await deleteDoc(doc(fdb, 'orders', id));
+  } catch (err) {
+    console.error(`Failed to delete order ${id} from Firestore:`, err);
+  }
+}
+
 // Save delivery to Firestore
 export async function syncDeliveryToFirestore(delivery: DeliveryRecord): Promise<void> {
   const fdb = getFirestoreDb();
@@ -187,6 +209,7 @@ export async function loadInitialDataFromFirestore(): Promise<{
   logs?: AuditLogRecord[];
   deliveries?: DeliveryRecord[];
   notifications?: NotificationRecord[];
+  orders?: OrderRecord[];
 }> {
   const fdb = getFirestoreDb();
   if (!fdb) return {};
@@ -198,6 +221,7 @@ export async function loadInitialDataFromFirestore(): Promise<{
     logs?: AuditLogRecord[];
     deliveries?: DeliveryRecord[];
     notifications?: NotificationRecord[];
+    orders?: OrderRecord[];
   } = {};
 
   try {
@@ -229,6 +253,12 @@ export async function loadInitialDataFromFirestore(): Promise<{
     const deliverySnap = await getDocs(collection(fdb, 'deliveries'));
     if (!deliverySnap.empty) {
       result.deliveries = deliverySnap.docs.map(d => d.data() as DeliveryRecord);
+    }
+
+    // Orders
+    const orderSnap = await getDocs(collection(fdb, 'orders'));
+    if (!orderSnap.empty) {
+      result.orders = orderSnap.docs.map(d => d.data() as OrderRecord);
     }
 
     // Notifications

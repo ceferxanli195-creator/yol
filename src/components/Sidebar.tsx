@@ -9,12 +9,14 @@ import {
   Trash2,
   Settings,
   UserCog,
+  ShoppingBag,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export type NavTab =
   | 'dashboard'
   | 'customers'
+  | 'orders'
   | 'deliveries'
   | 'map'
   | 'drivers'
@@ -59,8 +61,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
       userAllowed: true,
     },
     {
+      tab: 'orders',
+      label: isDriver ? 'Sifarişlər (Yeni/İcra)' : 'Sifarişlər',
+      icon: ShoppingBag,
+      driverAllowed: true,
+      userAllowed: true,
+    },
+    {
       tab: 'deliveries',
-      label: isDriver ? 'Tarixçə' : 'Çatdırılmalar',
+      label: isDriver ? 'Çatdırılma Tarixçəsi' : 'Çatdırılmalar',
       icon: History,
       driverAllowed: true,
       userAllowed: true,

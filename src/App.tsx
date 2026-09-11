@@ -8,6 +8,7 @@ import { CustomerFormModal } from './components/CustomerFormModal';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { CustomersPage } from './pages/CustomersPage';
+import { OrdersPage } from './pages/OrdersPage';
 import { DeliveriesPage } from './pages/DeliveriesPage';
 import { MapPage } from './pages/MapPage';
 import { DriversPage } from './pages/DriversPage';
@@ -83,7 +84,8 @@ export default function App() {
               onOpenAddCustomer={openAddCustomerFromDashboard}
             />
           )}
-          {currentTab === 'customers' && <CustomersPage />}
+          {currentTab === 'customers' && <CustomersPage onNavigate={setCurrentTab} />}
+          {currentTab === 'orders' && <OrdersPage onNavigate={setCurrentTab} />}
           {currentTab === 'deliveries' && <DeliveriesPage />}
           {currentTab === 'map' && <MapPage />}
           {currentTab === 'drivers' && <DriversPage />}

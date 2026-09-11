@@ -14,8 +14,13 @@ import { Customer, User } from '../types';
 import { CustomerCard } from '../components/CustomerCard';
 import { CustomerFormModal } from '../components/CustomerFormModal';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { NavTab } from '../components/Sidebar';
 
-export const CustomersPage: React.FC = () => {
+interface CustomersPageProps {
+  onNavigate?: (tab: NavTab) => void;
+}
+
+export const CustomersPage: React.FC<CustomersPageProps> = ({ onNavigate }) => {
   const { user, hasPermission } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
   const isDriver = user?.role === 'DRIVER';
@@ -43,14 +48,15 @@ export const CustomersPage: React.FC = () => {
         search: searchTerm,
         ownerId: selectedOwnerId === 'all' ? undefined : selectedOwnerId,
       });
-      setCustomers(res.customers);
+      setCustomers(res?.customers || []);
 
       if (isAdmin) {
-        const usersRes = await api.getUsers();
-        setUsersList(usersRes.users);
+        const usersRes = await api.getUsers().catch(() => ({ users: [] }));
+        setUsersList(usersRes?.users || []);
       }
     } catch (err: any) {
       setError(err.message || 'Müştərilər yüklənərkən xəta baş verdi.');
+      setCustomers([]);
     } finally {
       setIsLoading(false);
     }
@@ -64,10 +70,10 @@ export const CustomersPage: React.FC = () => {
   const handleSaveCustomer = async (data: Partial<Customer>) => {
     if (customerToEdit) {
       const res = await api.updateCustomer(customerToEdit.id, data);
-      setCustomers(prev => prev.map(c => (c.id === customerToEdit.id ? res.customer : c)));
+      setCustomers(prev => (prev || []).map(c => (c.id === customerToEdit.id ? res.customer : c)));
     } else {
       const res = await api.createCustomer(data);
-      setCustomers(prev => [res.customer, ...prev]);
+      setCustomers(prev => [res.customer, ...(prev || [])]);
     }
     fetchCustomers();
   };
@@ -78,7 +84,7 @@ export const CustomersPage: React.FC = () => {
     setIsDeleting(true);
     try {
       await api.deleteCustomer(customerToDelete.id);
-      setCustomers(prev => prev.filter(c => c.id !== customerToDelete.id));
+      setCustomers(prev => (prev || []).filter(c => c.id !== customerToDelete.id));
       setCustomerToDelete(null);
     } catch (err: any) {
       alert(err.message || 'Silinmə zamanı xəta baş verdi.');
@@ -99,7 +105,7 @@ export const CustomersPage: React.FC = () => {
   // Unique owners for driver/admin filter pills
   const availableOwners = useMemo(() => {
     const map = new Map<string, string>();
-    customers.forEach(c => {
+    (customers || []).forEach(c => {
       if (c.ownerId && c.ownerName) {
         map.set(c.ownerId, c.ownerName);
       }
@@ -284,6 +290,7 @@ export const CustomersPage: React.FC = () => {
               customer={customer}
               onEdit={handleEdit}
               onDelete={handleDeletePrompt}
+              onGoToOrders={() => onNavigate && onNavigate('orders')}
               onUpdated={(updated) =>
                 setCustomers(prev => prev.map(c => (c.id === updated.id ? updated : c)))
               }

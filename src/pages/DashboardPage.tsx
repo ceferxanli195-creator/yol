@@ -19,6 +19,7 @@ import {
   Calendar,
   Filter,
   RefreshCw,
+  ShoppingBag,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
@@ -60,7 +61,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
       if (isAdmin) {
         const uRes = await api.getUsers().catch(() => ({ users: [] }));
-        setUsersList(uRes.users);
+        setUsersList(uRes?.users || []);
       }
     } catch (err: any) {
       setError(err.message || 'Məlumatlar yüklənə bilmədi.');
@@ -190,17 +191,28 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </p>
         </div>
 
-        {/* Action Shortcut */}
-        {hasPermission('create_customer') && (
+        {/* Action Shortcuts */}
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <button
             type="button"
-            onClick={onOpenAddCustomer}
-            className="px-5 py-3 bg-white text-sky-700 hover:bg-sky-50 font-bold text-sm rounded-2xl shadow-md transition-all flex items-center gap-2 shrink-0"
+            onClick={() => onNavigate('orders')}
+            className="px-4 py-3 bg-white/20 hover:bg-white/30 text-white font-bold text-sm rounded-2xl backdrop-blur-xs transition-all flex items-center gap-2"
           >
-            <PlusCircle className="w-5 h-5 text-sky-600" />
-            <span>Yeni Müştəri</span>
+            <ShoppingBag className="w-5 h-5 text-white" />
+            <span>Sifarişlər</span>
           </button>
-        )}
+
+          {hasPermission('create_customer') && (
+            <button
+              type="button"
+              onClick={onOpenAddCustomer}
+              className="px-5 py-3 bg-white text-sky-700 hover:bg-sky-50 font-bold text-sm rounded-2xl shadow-md transition-all flex items-center gap-2"
+            >
+              <PlusCircle className="w-5 h-5 text-sky-600" />
+              <span>Yeni Müştəri</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Stats Cards Grid - Pure real values */}

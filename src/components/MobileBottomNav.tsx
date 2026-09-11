@@ -11,6 +11,7 @@ import {
   Settings,
   ShieldCheck,
   X,
+  ShoppingBag,
 } from 'lucide-react';
 import { NavTab } from './Sidebar';
 import { useAuth } from '../context/AuthContext';
@@ -29,21 +30,21 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ currentTab, on
   const isAdmin = user.role === 'ADMIN';
   const isDriver = user.role === 'DRIVER';
 
-  // Define the 4 primary tabs for the floating pill
+  // Define the primary tabs for the floating pill
   let primaryTabs: Array<{ tab: NavTab; label: string; icon: React.FC<{ className?: string }> }> = [];
 
   if (isAdmin) {
     primaryTabs = [
       { tab: 'dashboard', label: 'Əsas', icon: LayoutDashboard },
       { tab: 'customers', label: 'Müştərilər', icon: Users },
-      { tab: 'deliveries', label: 'Tarixçə', icon: History },
+      { tab: 'orders', label: 'Sifarişlər', icon: ShoppingBag },
       { tab: 'map', label: 'Xəritə', icon: MapPin },
     ];
   } else if (isDriver) {
     primaryTabs = [
       { tab: 'dashboard', label: 'Əsas', icon: LayoutDashboard },
+      { tab: 'orders', label: 'Sifarişlər', icon: ShoppingBag },
       { tab: 'customers', label: 'Müştərilər', icon: Users },
-      { tab: 'deliveries', label: 'Tarixçə', icon: History },
       { tab: 'map', label: 'Xəritə', icon: MapPin },
     ];
   } else {
@@ -51,13 +52,15 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ currentTab, on
     primaryTabs = [
       { tab: 'dashboard', label: 'Əsas', icon: LayoutDashboard },
       { tab: 'customers', label: 'Müştərilər', icon: Users },
-      { tab: 'deliveries', label: 'Tarixçə', icon: History },
+      { tab: 'orders', label: 'Sifarişlər', icon: ShoppingBag },
       { tab: 'map', label: 'Xəritə', icon: MapPin },
     ];
   }
 
   // Secondary items for the "Daha çox" sheet
   const moreItems: Array<{ tab: NavTab; label: string; icon: React.FC<{ className?: string }> }> = [];
+  moreItems.push({ tab: 'deliveries', label: 'Çatdırılma Tarixçəsi', icon: History });
+
   if (isAdmin) {
     moreItems.push(
       { tab: 'users', label: 'İstifadəçilər', icon: UserCog },

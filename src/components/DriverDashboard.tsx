@@ -17,10 +17,11 @@ import {
   Clock,
   Users,
   X,
+  ShoppingBag,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
-import { Customer, Delivery } from '../types';
+import { Customer, Delivery, OrderDashboardStats } from '../types';
 import { NavTab } from './Sidebar';
 
 interface DriverDashboardProps {
@@ -31,6 +32,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onNavigate }) 
   const { user } = useAuth();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [orderStats, setOrderStats] = useState<OrderDashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -45,12 +47,16 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onNavigate }) 
     setIsLoading(true);
     setError(null);
     try {
-      const [custRes, delivRes] = await Promise.all([
-        api.getCustomers(),
+      const [custRes, delivRes, oStatsRes] = await Promise.all([
+        api.getCustomers().catch(() => ({ customers: [] })),
         api.getDeliveries().catch(() => ({ deliveries: [] })),
+        api.getOrderDashboardStats().catch(() => null),
       ]);
-      setCustomers(custRes.customers || []);
-      setDeliveries(delivRes.deliveries || []);
+      setCustomers(custRes?.customers || []);
+      setDeliveries(delivRes?.deliveries || []);
+      if (oStatsRes?.stats) {
+        setOrderStats(oStatsRes.stats);
+      }
     } catch (err: any) {
       setError(err.message || 'Məlumatlar yüklənərkən xəta baş verdi.');
     } finally {
@@ -68,7 +74,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onNavigate }) 
     try {
       const res = await api.deliverCustomer(deliveringCustomer.id, deliveryNote);
       setCustomers(prev =>
-        prev.map(c => (c.id === deliveringCustomer.id ? res.customer : c))
+        (prev || []).map(c => (c.id === deliveringCustomer.id ? res.customer : c))
       );
       setDeliveringCustomer(null);
       setDeliveryNote('');
@@ -82,7 +88,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onNavigate }) 
     }
   };
 
-  const filtered = customers.filter(c => {
+  const filtered = (customers || []).filter(c => {
     const q = searchTerm.toLowerCase().trim();
     if (!q) return true;
     return (
@@ -93,9 +99,9 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onNavigate }) 
     );
   });
 
-  const withGpsCount = customers.filter(c => c.latitude !== 0 || c.longitude !== 0).length;
-  const deliveredCount = deliveries.filter(d => d.status === 'delivered').length;
-  const inTransitCount = deliveries.filter(d => d.status === 'in_transit').length;
+  const withGpsCount = (customers || []).filter(c => c.latitude !== 0 || c.longitude !== 0).length;
+  const deliveredCount = (deliveries || []).filter(d => d.status === 'delivered').length;
+  const inTransitCount = (deliveries || []).filter(d => d.status === 'in_transit').length;
 
   return (
     <div className="space-y-6 pb-20 md:pb-6">
@@ -118,6 +124,14 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onNavigate }) 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
+            onClick={() => onNavigate('orders')}
+            className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs sm:text-sm rounded-2xl shadow-md transition-all flex items-center gap-2"
+          >
+            <ShoppingBag className="w-4 h-4" />
+            <span>Sifarişlər {orderStats && orderStats.openOrdersCount > 0 ? `(${orderStats.openOrdersCount})` : ''}</span>
+          </button>
+          <button
+            type="button"
             onClick={() => onNavigate('deliveries')}
             className="px-4 py-2.5 bg-white/20 hover:bg-white/30 text-white font-bold text-xs sm:text-sm rounded-2xl backdrop-blur-xs transition-all flex items-center gap-2"
           >
@@ -134,6 +148,32 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onNavigate }) 
           </button>
         </div>
       </div>
+
+      {/* New Open Orders Driver Alert */}
+      {orderStats && orderStats.openOrdersCount > 0 && (
+        <div className="p-4 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-3xl text-white shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
+              <ShoppingBag className="w-5 h-5 text-white animate-bounce" />
+            </div>
+            <div>
+              <h4 className="font-bold text-sm">
+                {orderStats.openOrdersCount} yeni sifariş sürücü gözləyir!
+              </h4>
+              <p className="text-xs text-white/85">
+                Müştərilərdən yeni sifariş daxil olub. İlk qəbul edən sürücü sifarişi götürəcək.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigate('orders')}
+            className="px-4 py-2 bg-white text-emerald-800 hover:bg-emerald-50 font-bold text-xs rounded-xl shadow-sm transition-all shrink-0"
+          >
+            Sifarişləri Götür →
+          </button>
+        </div>
+      )}
 
       {/* Toast Alert */}
       {toastMessage && (

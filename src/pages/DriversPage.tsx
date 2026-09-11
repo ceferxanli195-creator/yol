@@ -32,9 +32,10 @@ export const DriversPage: React.FC = () => {
     setError(null);
     try {
       const res = await api.getDrivers();
-      setDrivers(res.drivers);
+      setDrivers(res?.drivers || []);
     } catch (err: any) {
       setError(err.message || 'Sürücülər yüklənə bilmədi.');
+      setDrivers([]);
     } finally {
       setIsLoading(false);
     }

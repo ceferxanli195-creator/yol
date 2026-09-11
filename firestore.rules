@@ -13,6 +13,26 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Orders collection
+    match /orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    // Deliveries collection
+    match /deliveries/{deliveryId} {
+      allow read, write: if true;
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+
+    // Locations / GPS updates collection
+    match /locations/{locationId} {
+      allow read, write: if true;
+    }
+
     // Users collection
     match /users/{userId} {
       allow read, write: if true;

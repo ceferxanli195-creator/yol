@@ -138,7 +138,7 @@ export const NotificationsDropdown: React.FC = () => {
 
           {/* Notifications List */}
           <div className="max-h-[380px] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/80">
-            {notifications.length === 0 ? (
+            {!notifications || notifications.length === 0 ? (
               <div className="p-8 text-center">
                 <Bell className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
                 <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -146,7 +146,7 @@ export const NotificationsDropdown: React.FC = () => {
                 </p>
               </div>
             ) : (
-              notifications.map((item) => {
+              (notifications || []).map((item) => {
                 return (
                   <div
                     key={item.id}

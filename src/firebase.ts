@@ -4,7 +4,8 @@ import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase client
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const existingApps = getApps();
+const app = (!existingApps || existingApps.length === 0) ? initializeApp(firebaseConfig) : getApp();
 
 /* CRITICAL: Must provide firestoreDatabaseId per instructions */
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);

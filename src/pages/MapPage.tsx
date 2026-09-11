@@ -27,14 +27,15 @@ export const MapPage: React.FC = () => {
       const res = await api.getCustomers({
         ownerId: selectedOwnerId === 'all' ? undefined : selectedOwnerId,
       });
-      setCustomers(res.customers);
+      setCustomers(res?.customers || []);
 
       if (isAdmin) {
-        const uRes = await api.getUsers();
-        setUsersList(uRes.users);
+        const uRes = await api.getUsers().catch(() => ({ users: [] }));
+        setUsersList(uRes?.users || []);
       }
     } catch (err: any) {
       setError(err.message || 'Xəritə məlumatları yüklənə bilmədi.');
+      setCustomers([]);
     } finally {
       setIsLoading(false);
     }

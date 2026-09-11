@@ -31,9 +31,10 @@ export const TrashPage: React.FC = () => {
     setError(null);
     try {
       const res = await api.getTrash();
-      setDeletedCustomers(res.trash);
+      setDeletedCustomers(res?.trash || []);
     } catch (err: any) {
       setError(err.message || 'Zibil qutusu yüklənə bilmədi.');
+      setDeletedCustomers([]);
     } finally {
       setIsLoading(false);
     }

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { UserRecord, CustomerRecord, DriverRecord, AuditLogRecord, UserPermissions, DeliveryRecord, NotificationRecord, DeliveryStatus, UserRole } from './types';
+import { UserRecord, CustomerRecord, DriverRecord, AuditLogRecord, UserPermissions, DeliveryRecord, NotificationRecord, DeliveryStatus, UserRole, OrderRecord, OrderStatus, ExecutorType, OrderHistoryEvent } from './types';
 import {
   syncCustomerToFirestore,
   deleteCustomerFromFirestore,
@@ -14,6 +14,8 @@ import {
   deleteDeliveryFromFirestore,
   syncNotificationToFirestore,
   deleteNotificationFromFirestore,
+  syncOrderToFirestore,
+  deleteOrderFromFirestore,
   loadInitialDataFromFirestore,
 } from './firestore';
 
@@ -29,6 +31,7 @@ const DRIVERS_FILE = path.join(DATA_DIR, 'drivers.json');
 const LOGS_FILE = path.join(DATA_DIR, 'logs.json');
 const DELIVERIES_FILE = path.join(DATA_DIR, 'deliveries.json');
 const NOTIFICATIONS_FILE = path.join(DATA_DIR, 'notifications.json');
+const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 
 function readJsonFile<T>(filePath: string, defaultValue: T): T {
   try {
@@ -74,6 +77,20 @@ export function normalizePhone(raw: string): string {
   return digits;
 }
 
+export function getBakuDateTime(date: Date = new Date()): { dateStr: string; timeStr: string } {
+  const pad = (n: number) => (n < 10 ? '0' + n : '' + n);
+  const azTime = new Date(date.getTime() + (4 * 60 + date.getTimezoneOffset()) * 60000);
+  const day = pad(azTime.getDate());
+  const month = pad(azTime.getMonth() + 1);
+  const year = azTime.getFullYear();
+  const hours = pad(azTime.getHours());
+  const minutes = pad(azTime.getMinutes());
+  return {
+    dateStr: `${day}.${month}.${year}`,
+    timeStr: `${hours}:${minutes}`,
+  };
+}
+
 const DEFAULT_PERMISSIONS: UserPermissions = {
   view_customers: true,
   create_customer: true,
@@ -93,6 +110,7 @@ class Database {
   private logs: AuditLogRecord[] = [];
   private deliveries: DeliveryRecord[] = [];
   private notifications: NotificationRecord[] = [];
+  private orders: OrderRecord[] = [];
 
   constructor() {
     this.reload();
@@ -135,6 +153,14 @@ class Database {
         this.deliveries = Array.from(idMap.values());
         this.saveDeliveries();
       }
+      if (cloudData.orders && cloudData.orders.length > 0) {
+        const idMap = new Map(this.orders.map(o => [o.id, o]));
+        for (const o of cloudData.orders) {
+          idMap.set(o.id, o);
+        }
+        this.orders = Array.from(idMap.values());
+        this.saveOrders();
+      }
       if (cloudData.notifications && cloudData.notifications.length > 0) {
         const idMap = new Map(this.notifications.map(n => [n.id, n]));
         for (const n of cloudData.notifications) {
@@ -155,6 +181,9 @@ class Database {
       for (const del of this.deliveries) {
         syncDeliveryToFirestore(del);
       }
+      for (const ord of this.orders) {
+        syncOrderToFirestore(ord);
+      }
       for (const notif of this.notifications) {
         syncNotificationToFirestore(notif);
       }
@@ -170,6 +199,7 @@ class Database {
     this.logs = readJsonFile<AuditLogRecord[]>(LOGS_FILE, []);
     this.deliveries = readJsonFile<DeliveryRecord[]>(DELIVERIES_FILE, []);
     this.notifications = readJsonFile<NotificationRecord[]>(NOTIFICATIONS_FILE, []);
+    this.orders = readJsonFile<OrderRecord[]>(ORDERS_FILE, []);
   }
 
   private saveUsers() {
@@ -194,6 +224,10 @@ class Database {
 
   private saveNotifications() {
     writeJsonFile(NOTIFICATIONS_FILE, this.notifications);
+  }
+
+  private saveOrders() {
+    writeJsonFile(ORDERS_FILE, this.orders);
   }
 
   private ensureInitialAdmin() {
@@ -939,7 +973,9 @@ class Database {
     userId: string;
     title: string;
     message: string;
-    type: 'delivery_delivered' | 'delivery_assigned' | 'system';
+    type: 'order_new' | 'order_claimed' | 'order_departed' | 'order_delivered' | 'delivery_delivered' | 'delivery_assigned' | 'system';
+    orderId?: string;
+    orderNumber?: number;
     deliveryId?: string;
     customerId?: string;
     customerName?: string;
@@ -988,6 +1024,572 @@ class Database {
       this.saveNotifications();
     }
     return count;
+  }
+
+  // ==========================================
+  // --- ORDER MANAGEMENT (SİFARİŞ VƏ ÇATDIRILMA) ---
+  // ==========================================
+
+  public getOrders(params?: {
+    status?: string;
+    creatorId?: string;
+    ownerId?: string;
+    driverId?: string;
+    executorId?: string;
+    search?: string;
+    date?: string;
+  }): OrderRecord[] {
+    let list = [...this.orders];
+
+    if (params?.status) {
+      if (params.status === 'active') {
+        list = list.filter(o => o.status !== 'delivered' && o.status !== 'cancelled');
+      } else if (params.status === 'open_for_drivers') {
+        list = list.filter(o => o.status === 'pending_driver');
+      } else {
+        list = list.filter(o => o.status === params.status);
+      }
+    }
+
+    if (params?.creatorId) {
+      list = list.filter(o => o.creatorId === params.creatorId);
+    }
+
+    if (params?.ownerId) {
+      list = list.filter(o => o.ownerId === params.ownerId);
+    }
+
+    if (params?.driverId) {
+      list = list.filter(o => o.driverId === params.driverId || o.executorId === params.driverId);
+    }
+
+    if (params?.executorId) {
+      list = list.filter(o => o.executorId === params.executorId);
+    }
+
+    if (params?.date) {
+      list = list.filter(o => o.createdDateStr === params.date || o.createdAt.startsWith(params.date));
+    }
+
+    if (params?.search) {
+      const q = params.search.toLowerCase();
+      list = list.filter(o =>
+        o.orderNumber.toString().includes(q) ||
+        o.customerName.toLowerCase().includes(q) ||
+        o.customerPhone.includes(q) ||
+        o.customerAddress.toLowerCase().includes(q) ||
+        o.creatorName.toLowerCase().includes(q) ||
+        (o.executorName && o.executorName.toLowerCase().includes(q))
+      );
+    }
+
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  public getOrderById(id: string): OrderRecord | undefined {
+    return this.orders.find(o => o.id === id);
+  }
+
+  public getNextOrderNumber(): number {
+    if (this.orders.length === 0) return 1058;
+    const maxNumber = this.orders.reduce((max, o) => (o.orderNumber > max ? o.orderNumber : max), 1057);
+    return maxNumber + 1;
+  }
+
+  public notifyActiveDrivers(order: OrderRecord) {
+    const activeDrivers = this.drivers.filter(d => d.status === 'active');
+    for (const driver of activeDrivers) {
+      this.createNotification({
+        userId: driver.id,
+        title: '🚚 Yeni sifariş var',
+        message: `${order.customerName} üçün yeni sifariş yaradıldı. (#${order.orderNumber})`,
+        type: 'order_new',
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        customerId: order.customerId,
+        customerName: order.customerName,
+        status: 'Yeni sifariş',
+      });
+    }
+  }
+
+  public createOrder(params: {
+    customerId: string;
+    creatorId: string;
+    creatorName: string;
+    creatorRole: UserRole;
+    notes?: string;
+    dispatchType?: ExecutorType | null;
+  }): OrderRecord {
+    const customer = this.getCustomerById(params.customerId);
+    if (!customer) {
+      throw new Error('Müştəri tapılmadı.');
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const { dateStr, timeStr } = getBakuDateTime(now);
+    const orderNumber = this.getNextOrderNumber();
+
+    let initialStatus: OrderStatus = 'new';
+    let executorType: ExecutorType | null = null;
+    let executorId: string | null = null;
+    let executorName: string | null = null;
+    let driverId: string | null = null;
+    let driverName: string | null = null;
+    let claimedAt: string | null = null;
+
+    if (params.dispatchType === 'USER') {
+      initialStatus = 'assigned';
+      executorType = 'USER';
+      executorId = params.creatorId;
+      executorName = params.creatorName;
+      claimedAt = nowIso;
+    } else if (params.dispatchType === 'DRIVER') {
+      initialStatus = 'pending_driver';
+      executorType = null;
+    }
+
+    const history: OrderHistoryEvent[] = [
+      {
+        step: 'CREATED',
+        title: 'Sifariş yaradıldı',
+        actorId: params.creatorId,
+        actorName: params.creatorName,
+        actorRole: params.creatorRole,
+        timestamp: nowIso,
+        dateStr,
+        timeStr,
+        details: params.dispatchType === 'USER'
+          ? `User ${params.creatorName} sifarişi yaratdı və özü aparmağı seçdi.`
+          : params.dispatchType === 'DRIVER'
+          ? `User ${params.creatorName} sifarişi yaratdı və sürücülərə yönləndirdi.`
+          : `User ${params.creatorName} sifarişi yaratdı.`,
+      },
+    ];
+
+    const order: OrderRecord = {
+      id: 'ord_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      orderNumber,
+      customerId: customer.id,
+      customerName: customer.fullName,
+      customerPhone: customer.phone,
+      customerAddress: customer.address,
+      customerLatitude: customer.latitude,
+      customerLongitude: customer.longitude,
+      customerNotes: customer.notes,
+      ownerId: customer.ownerId,
+      ownerName: this.users.find((u) => u.id === customer.ownerId)?.name || customer.ownerId || 'Bilinməyən',
+      creatorId: params.creatorId,
+      creatorName: params.creatorName,
+      creatorRole: params.creatorRole,
+      status: initialStatus,
+      dispatchType: params.dispatchType || null,
+      executorType,
+      executorId,
+      executorName,
+      driverId,
+      driverName,
+      notes: params.notes || '',
+      createdAt: nowIso,
+      createdDateStr: dateStr,
+      createdTimeStr: timeStr,
+      claimedAt,
+      departedAt: null,
+      deliveredAt: null,
+      deliveredBy: null,
+      deliveredByName: null,
+      deliveredLocation: null,
+      currentLocation: null,
+      history,
+      updatedAt: nowIso,
+    };
+
+    this.orders.unshift(order);
+    this.saveOrders();
+    syncOrderToFirestore(order);
+
+    // If driver dispatch selected, notify drivers immediately (Requirement 4)
+    if (params.dispatchType === 'DRIVER') {
+      this.notifyActiveDrivers(order);
+    }
+
+    // Also update customer's currentDeliveryStatus for backward compatibility
+    customer.currentDeliveryStatus = initialStatus === 'assigned' ? 'assigned' : null;
+    customer.updatedAt = nowIso;
+    this.saveCustomers();
+    syncCustomerToFirestore(customer);
+
+    this.addLog({
+      userId: params.creatorId,
+      userName: params.creatorName,
+      role: params.creatorRole,
+      action: 'Sifariş yaradıldı',
+      actionType: 'ORDER_CREATED',
+      entityType: 'CUSTOMER',
+      entityId: customer.id,
+      customerId: customer.id,
+      customerName: customer.fullName,
+      details: `${customer.fullName} üçün #${order.orderNumber} nömrəli yeni sifariş qeydə alındı.`,
+      newData: { orderNumber: order.orderNumber, status: order.status },
+    });
+
+    return order;
+  }
+
+  public dispatchOrder(
+    orderId: string,
+    dispatchType: ExecutorType,
+    actorId: string,
+    actorName: string,
+    actorRole: UserRole
+  ): OrderRecord {
+    const order = this.getOrderById(orderId);
+    if (!order) throw new Error('Sifariş tapılmadı.');
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const { dateStr, timeStr } = getBakuDateTime(now);
+
+    if (dispatchType === 'USER') {
+      order.dispatchType = 'USER';
+      order.executorType = 'USER';
+      order.executorId = actorId;
+      order.executorName = actorName;
+      order.status = 'assigned';
+      order.claimedAt = nowIso;
+      order.updatedAt = nowIso;
+
+      order.history.push({
+        step: 'DISPATCH_SELECTED',
+        title: 'User özü aparır',
+        actorId,
+        actorName,
+        actorRole,
+        timestamp: nowIso,
+        dateStr,
+        timeStr,
+        details: `User ${actorName} sifarişi özü çatdırmağı seçdi.`,
+      });
+
+      this.saveOrders();
+      syncOrderToFirestore(order);
+    } else {
+      order.dispatchType = 'DRIVER';
+      order.status = 'pending_driver';
+      order.executorType = null;
+      order.executorId = null;
+      order.executorName = null;
+      order.driverId = null;
+      order.driverName = null;
+      order.updatedAt = nowIso;
+
+      order.history.push({
+        step: 'DISPATCH_SELECTED',
+        title: 'Sürücülərə yönləndirildi',
+        actorId,
+        actorName,
+        actorRole,
+        timestamp: nowIso,
+        dateStr,
+        timeStr,
+        details: `Sifariş bütün aktiv sürücülərə açıq elan edildi.`,
+      });
+
+      this.saveOrders();
+      syncOrderToFirestore(order);
+
+      // Notify active drivers (Requirement 4 & 12)
+      this.notifyActiveDrivers(order);
+    }
+
+    return order;
+  }
+
+  // ATOMIC claim order - Race condition protection (Requirement 6)
+  public claimOrder(orderId: string, driverId: string, driverName: string): OrderRecord {
+    const order = this.getOrderById(orderId);
+    if (!order) {
+      throw new Error('Sifariş tapılmadı.');
+    }
+
+    // Atomic race-condition check
+    if (order.status !== 'pending_driver' && order.status !== 'new') {
+      throw new Error('Bu sifariş artıq başqa sürücü tərəfindən götürülüb və ya icradadır.');
+    }
+    if (order.executorId && order.executorId !== driverId) {
+      throw new Error(`Bu sifariş artıq ${order.executorName || 'başqa sürücü'} tərəfindən götürülüb.`);
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const { dateStr, timeStr } = getBakuDateTime(now);
+
+    order.status = 'assigned';
+    order.dispatchType = 'DRIVER';
+    order.executorType = 'DRIVER';
+    order.executorId = driverId;
+    order.executorName = driverName;
+    order.driverId = driverId;
+    order.driverName = driverName;
+    order.claimedAt = nowIso;
+    order.updatedAt = nowIso;
+
+    order.history.push({
+      step: 'CLAIMED',
+      title: 'Sürücü sifarişi götürdü',
+      actorId: driverId,
+      actorName: driverName,
+      actorRole: 'DRIVER',
+      timestamp: nowIso,
+      dateStr,
+      timeStr,
+      details: `Sürücü ${driverName} sifarişi qəbul etdi.`,
+    });
+
+    this.saveOrders();
+    syncOrderToFirestore(order);
+
+    // Notify the User who created the order (Requirement 7)
+    if (order.creatorId) {
+      this.createNotification({
+        userId: order.creatorId,
+        title: 'Sifariş götürüldü',
+        message: `🚚 ${driverName} ${order.customerName} sifarişini götürdü. (#${order.orderNumber})`,
+        type: 'order_claimed',
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        customerId: order.customerId,
+        customerName: order.customerName,
+        driverId,
+        driverName,
+        status: 'Götürüldü',
+      });
+    }
+
+    return order;
+  }
+
+  public startOrder(
+    orderId: string,
+    actorId: string,
+    actorName: string,
+    actorRole: UserRole
+  ): OrderRecord {
+    const order = this.getOrderById(orderId);
+    if (!order) throw new Error('Sifariş tapılmadı.');
+
+    if (order.status === 'delivered') {
+      throw new Error('Bu sifariş artıq təhvil verilib.');
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const { dateStr, timeStr } = getBakuDateTime(now);
+
+    order.status = 'in_transit';
+    order.departedAt = nowIso;
+    order.updatedAt = nowIso;
+
+    order.history.push({
+      step: 'DEPARTED',
+      title: 'Yola çıxdı',
+      actorId,
+      actorName,
+      actorRole,
+      timestamp: nowIso,
+      dateStr,
+      timeStr,
+      details: `${actorName} müştəriyə doğru yola çıxdı.`,
+    });
+
+    this.saveOrders();
+    syncOrderToFirestore(order);
+
+    // Notify User if driver departed (Requirement 8)
+    if (order.executorType === 'DRIVER' && order.creatorId && order.creatorId !== actorId) {
+      this.createNotification({
+        userId: order.creatorId,
+        title: 'Sürücü yola çıxdı',
+        message: `🚚 ${actorName} ${order.customerName} üçün yola çıxdı. (#${order.orderNumber})`,
+        type: 'order_departed',
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        customerId: order.customerId,
+        customerName: order.customerName,
+        driverId: actorId,
+        driverName: actorName,
+        status: 'Yoldadır',
+      });
+    }
+
+    return order;
+  }
+
+  public updateOrderLocation(
+    orderId: string,
+    location: { latitude: number; longitude: number; speed?: number | null; accuracy?: number | null }
+  ): OrderRecord {
+    const order = this.getOrderById(orderId);
+    if (!order) throw new Error('Sifariş tapılmadı.');
+
+    const nowIso = new Date().toISOString();
+    order.currentLocation = {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      speed: location.speed ?? null,
+      accuracy: location.accuracy ?? null,
+      updatedAt: nowIso,
+    };
+    order.updatedAt = nowIso;
+
+    this.saveOrders();
+    syncOrderToFirestore(order);
+    return order;
+  }
+
+  public deliverOrder(
+    orderId: string,
+    deliveredBy: string,
+    deliveredByName: string,
+    location?: { latitude: number; longitude: number; accuracy?: number } | null,
+    note?: string
+  ): OrderRecord {
+    const order = this.getOrderById(orderId);
+    if (!order) throw new Error('Sifariş tapılmadı.');
+
+    // Double delivery check (Requirement 13)
+    if (order.status === 'delivered') {
+      throw new Error('Bu sifariş artıq təhvil verilib.');
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const { dateStr, timeStr } = getBakuDateTime(now);
+
+    order.status = 'delivered';
+    order.deliveredAt = nowIso;
+    order.deliveredBy = deliveredBy;
+    order.deliveredByName = deliveredByName;
+    order.deliveredLocation = location || null;
+    if (note) {
+      order.notes = order.notes ? `${order.notes} | ${note}` : note;
+    }
+    order.updatedAt = nowIso;
+
+    order.history.push({
+      step: 'DELIVERED',
+      title: 'Təhvil verildi',
+      actorId: deliveredBy,
+      actorName: deliveredByName,
+      actorRole: order.executorType === 'DRIVER' ? 'DRIVER' : 'USER',
+      timestamp: nowIso,
+      dateStr,
+      timeStr,
+      details: `${deliveredByName} sifarişi müştəriyə təhvil verdi.${note ? ` Qeyd: ${note}` : ''}`,
+      location: location || undefined,
+    });
+
+    this.saveOrders();
+    syncOrderToFirestore(order);
+
+    // Notify User who created the order (Requirement 15)
+    if (order.creatorId) {
+      const isSelf = order.creatorId === deliveredBy;
+      this.createNotification({
+        userId: order.creatorId,
+        title: 'Sifariş təhvil verildi',
+        message: isSelf
+          ? `✅ Siz ${order.customerName} sifarişini təhvil verdiniz. (#${order.orderNumber})`
+          : `✅ ${deliveredByName} ${order.customerName} sifarişini təhvil verdi. (#${order.orderNumber})`,
+        type: 'order_delivered',
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        customerId: order.customerId,
+        customerName: order.customerName,
+        driverId: order.driverId || undefined,
+        driverName: deliveredByName,
+        status: 'Təhvil verildi',
+        deliveredAt: nowIso,
+      });
+    }
+
+    return order;
+  }
+
+  // Dashboard Stats matching Requirement 21 for User, Driver, Admin
+  public getOrderDashboardStats(currentUser: { id: string; role: UserRole; name: string }) {
+    const todayStr = getBakuDateTime().dateStr;
+    const allOrders = this.orders;
+
+    if (currentUser.role === 'DRIVER') {
+      const driverOrders = allOrders.filter(o => o.driverId === currentUser.id || o.executorId === currentUser.id);
+      const openOrders = allOrders.filter(o => o.status === 'pending_driver');
+      const assignedToMe = driverOrders.filter(o => o.status === 'assigned');
+      const inTransit = driverOrders.filter(o => o.status === 'in_transit');
+      const deliveredByMe = driverOrders.filter(o => o.status === 'delivered');
+      const todayDelivered = deliveredByMe.filter(o => {
+        if (!o.deliveredAt) return false;
+        const { dateStr } = getBakuDateTime(new Date(o.deliveredAt));
+        return dateStr === todayStr;
+      });
+
+      const lastDelivery = deliveredByMe.sort((a, b) => new Date(b.deliveredAt || 0).getTime() - new Date(a.deliveredAt || 0).getTime())[0] || null;
+
+      return {
+        role: 'DRIVER',
+        openOrdersCount: openOrders.length,
+        assignedCount: assignedToMe.length,
+        inTransitCount: inTransit.length,
+        deliveredCount: deliveredByMe.length,
+        todayDeliveredCount: todayDelivered.length,
+        lastDelivery,
+        openOrders: openOrders.slice(0, 10),
+        activeOrders: [...inTransit, ...assignedToMe],
+        recentDelivered: deliveredByMe.slice(0, 5),
+      };
+    }
+
+    if (currentUser.role === 'USER') {
+      const myOrders = allOrders.filter(o => o.creatorId === currentUser.id || o.ownerId === currentUser.id);
+      const newOrders = myOrders.filter(o => o.status === 'new');
+      const waitingDrivers = myOrders.filter(o => o.status === 'pending_driver');
+      const pendingTotal = myOrders.filter(o => o.status === 'new' || o.status === 'pending_driver' || o.status === 'assigned');
+      const inTransit = myOrders.filter(o => o.status === 'in_transit');
+      const delivered = myOrders.filter(o => o.status === 'delivered');
+      const activeLive = inTransit; // Live tracking available
+
+      return {
+        role: 'USER',
+        newOrdersCount: newOrders.length,
+        pendingDriversCount: waitingDrivers.length,
+        pendingTotalCount: pendingTotal.length,
+        inTransitCount: inTransit.length,
+        deliveredCount: delivered.length,
+        activeLiveCount: activeLive.length,
+        recentOrders: myOrders.slice(0, 10),
+        activeLiveOrders: activeLive,
+      };
+    }
+
+    // ADMIN
+    const totalOrders = allOrders.length;
+    const newOrders = allOrders.filter(o => o.status === 'new' || o.status === 'pending_driver');
+    const inTransit = allOrders.filter(o => o.status === 'in_transit');
+    const delivered = allOrders.filter(o => o.status === 'delivered');
+    const activeDrivers = this.drivers.filter(d => d.status === 'active').length;
+
+    return {
+      role: 'ADMIN',
+      totalOrders,
+      newOrdersCount: newOrders.length,
+      inTransitCount: inTransit.length,
+      deliveredCount: delivered.length,
+      activeDriversCount: activeDrivers,
+      activeDeliveriesCount: inTransit.length,
+      recentOrders: allOrders.slice(0, 15),
+      inTransitOrders: inTransit,
+    };
   }
 }
 

@@ -63,9 +63,10 @@ export const UsersPage: React.FC<UsersPageProps> = () => {
     setError(null);
     try {
       const res = await api.getUsers();
-      setUsers(res.users);
+      setUsers(res?.users || []);
     } catch (err: any) {
       setError(err.message || 'İstifadəçilər yüklənə bilmədi.');
+      setUsers([]);
     } finally {
       setIsLoading(false);
     }

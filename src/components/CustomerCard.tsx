@@ -15,10 +15,12 @@ import {
   PackageCheck,
   Clock,
   X,
+  ShoppingBag,
 } from 'lucide-react';
-import { Customer, Driver } from '../types';
+import { Customer, Driver, Order } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
+import { CreateOrderModal } from './CreateOrderModal';
 
 interface CustomerCardProps {
   customer: Customer;
@@ -26,6 +28,8 @@ interface CustomerCardProps {
   onDelete?: (customer: Customer) => void;
   onViewMap?: (customer: Customer) => void;
   onUpdated?: (updatedCustomer: Customer) => void;
+  onOrderCreated?: (order: Order) => void;
+  onGoToOrders?: () => void;
 }
 
 export const CustomerCard: React.FC<CustomerCardProps> = ({
@@ -34,11 +38,14 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
   onDelete,
   onViewMap,
   onUpdated,
+  onOrderCreated,
+  onGoToOrders,
 }) => {
   const { user, hasPermission } = useAuth();
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showDeliverModal, setShowDeliverModal] = useState(false);
+  const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
   const [deliveryNote, setDeliveryNote] = useState('');
   const [isDelivering, setIsDelivering] = useState(false);
   const [drivers, setDrivers] = useState<Driver[]>([]);
@@ -327,6 +334,20 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
           </div>
         </div>
 
+        {/* Sifariş var button - Requirement 1 & 2 for User / Admin */}
+        {!isDriver && (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => setShowCreateOrderModal(true)}
+              className="w-full py-2.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-all active:scale-[0.98]"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              <span>Sifariş var</span>
+            </button>
+          </div>
+        )}
+
         {/* Action Buttons - Fully wrapped & touch-friendly */}
         <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center gap-2">
           {/* Call button */}
@@ -587,6 +608,19 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
           </div>
         </div>
       )}
+
+      {/* Create Order Modal */}
+      <CreateOrderModal
+        isOpen={showCreateOrderModal}
+        customer={customer}
+        onClose={() => setShowCreateOrderModal(false)}
+        onOrderCreated={(newOrder) => {
+          if (onOrderCreated) {
+            onOrderCreated(newOrder);
+          }
+        }}
+        onGoToOrders={onGoToOrders}
+      />
     </>
   );
 };

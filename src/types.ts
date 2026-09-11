@@ -61,6 +61,80 @@ export interface Customer {
 
 export type DeliveryStatus = 'assigned' | 'in_transit' | 'delivered';
 
+export type OrderStatus = 'new' | 'pending_driver' | 'assigned' | 'in_transit' | 'delivered' | 'cancelled';
+export type ExecutorType = 'USER' | 'DRIVER';
+
+export interface OrderHistoryEvent {
+  step: 'CREATED' | 'DISPATCH_SELECTED' | 'CLAIMED' | 'DEPARTED' | 'LOCATION_UPDATE' | 'DELIVERED';
+  title: string;
+  actorId: string;
+  actorName: string;
+  actorRole: UserRole;
+  timestamp: string;
+  dateStr: string;
+  timeStr: string;
+  details?: string;
+  location?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  };
+}
+
+export interface Order {
+  id: string;
+  orderNumber: number;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  customerLatitude: number;
+  customerLongitude: number;
+  customerNotes?: string;
+  ownerId: string;
+  ownerName: string;
+  creatorId: string;
+  creatorName: string;
+  creatorRole: UserRole;
+  status: OrderStatus;
+  dispatchType?: ExecutorType | null;
+  executorType?: ExecutorType | null;
+  executorId?: string | null;
+  executorName?: string | null;
+  driverId?: string | null;
+  driverName?: string | null;
+  notes?: string;
+  createdAt: string;
+  createdDateStr: string;
+  createdTimeStr: string;
+  claimedAt?: string | null;
+  departedAt?: string | null;
+  deliveredAt?: string | null;
+  deliveredBy?: string | null;
+  deliveredByName?: string | null;
+  deliveredLocation?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  } | null;
+  currentLocation?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+    speed?: number | null;
+    updatedAt: string;
+  } | null;
+  history: OrderHistoryEvent[];
+  updatedAt: string;
+}
+
+export interface OrderDashboardStats {
+  openOrdersCount: number;
+  myActiveOrdersCount: number;
+  todayDeliveredCount: number;
+  totalOrdersCount: number;
+}
+
 export interface Delivery {
   id: string;
   customerId: string;
@@ -91,7 +165,9 @@ export interface NotificationItem {
   userId: string;
   title: string;
   message: string;
-  type: 'delivery_delivered' | 'delivery_assigned' | 'system';
+  type: 'order_new' | 'order_claimed' | 'order_departed' | 'order_delivered' | 'delivery_delivered' | 'delivery_assigned' | 'system';
+  orderId?: string;
+  orderNumber?: number;
   deliveryId?: string;
   customerId?: string;
   customerName?: string;
