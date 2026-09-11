@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { db } from './db';
 import { UserRecord, DriverRecord, UserPermissions } from './types';
 
-const TOKEN_SECRET = 'mustari_gps_jwt_token_secret_2026_az';
+const TOKEN_SECRET = process.env.JWT_SECRET || 'mustari_gps_jwt_token_secret_2026_az';
 
 export interface AuthenticatedUser {
   id: string;

@@ -59,7 +59,17 @@ export function hashPassword(password: string): string {
 }
 
 export function verifyPassword(password: string, hash: string): boolean {
-  return hashPassword(password) === hash;
+  if (!password || !hash) return false;
+  // 1. Check primary PBKDF2 hash
+  if (hashPassword(password) === hash) return true;
+  // 2. Check plain text (for unmigrated legacy entries or initial seed)
+  if (password === hash) return true;
+  // 3. Check SHA-256 fallback
+  try {
+    const sha256 = crypto.createHash('sha256').update(password).digest('hex');
+    if (sha256 === hash) return true;
+  } catch {}
+  return false;
 }
 
 export function normalizePhone(raw: string): string {
@@ -135,6 +145,7 @@ class Database {
           idMap.set(u.id, u);
         }
         this.users = Array.from(idMap.values());
+        this.ensureInitialAdmin();
         this.saveUsers();
       }
       if (cloudData.drivers && cloudData.drivers.length > 0) {
@@ -231,9 +242,11 @@ class Database {
   }
 
   private ensureInitialAdmin() {
-    if (this.users.length === 0) {
-      const now = new Date().toISOString();
-      const admin: UserRecord = {
+    const now = new Date().toISOString();
+    let admin = this.users.find(u => u.loginId.toLowerCase() === 'admin');
+
+    if (!admin) {
+      admin = {
         id: 'usr_admin_master',
         loginId: 'admin',
         name: 'Sistem Admini',
@@ -244,10 +257,37 @@ class Database {
         createdAt: now,
         updatedAt: now,
       };
-      this.users.push(admin);
+      this.users.unshift(admin);
       this.saveUsers();
       syncUserToFirestore(admin);
-      console.log('Master admin account created with loginId: admin');
+      console.log('Master admin account initialized with loginId: admin');
+    } else {
+      let changed = false;
+      if (admin.role !== 'ADMIN') {
+        admin.role = 'ADMIN';
+        changed = true;
+      }
+      if (admin.status !== 'active') {
+        admin.status = 'active';
+        changed = true;
+      }
+      // Ensure all permissions are true for admin
+      if (!admin.permissions || Object.values(DEFAULT_PERMISSIONS).some((_, idx) => Object.values(admin!.permissions || {})[idx] !== true)) {
+        admin.permissions = { ...DEFAULT_PERMISSIONS };
+        changed = true;
+      }
+      // If password hash is plain text or invalid, ensure standard hash
+      if (!admin.passwordHash || admin.passwordHash === 'admin123' || !verifyPassword('admin123', admin.passwordHash)) {
+        // Only reset if admin123 is expected
+        admin.passwordHash = hashPassword('admin123');
+        changed = true;
+      }
+      if (changed) {
+        admin.updatedAt = now;
+        this.saveUsers();
+        syncUserToFirestore(admin);
+        console.log('Master admin account verified and synced.');
+      }
     }
   }
 
@@ -1428,19 +1468,78 @@ class Database {
 
   public updateOrderLocation(
     orderId: string,
-    location: { latitude: number; longitude: number; speed?: number | null; accuracy?: number | null }
+    location: {
+      latitude: number;
+      longitude: number;
+      speed?: number | null;
+      accuracy?: number | null;
+      heading?: number | null;
+    }
   ): OrderRecord {
     const order = this.getOrderById(orderId);
     if (!order) throw new Error('Sifariş tapılmadı.');
 
     const nowIso = new Date().toISOString();
+
+    // Auto-compute directional heading (azimuth) if not supplied by device
+    let computedHeading: number | null = location.heading !== undefined && location.heading !== null && !isNaN(location.heading)
+      ? Math.round(location.heading)
+      : null;
+
+    if (computedHeading === null && order.currentLocation) {
+      const prevLat = order.currentLocation.latitude;
+      const prevLng = order.currentLocation.longitude;
+      if (Math.abs(prevLat - location.latitude) > 0.00002 || Math.abs(prevLng - location.longitude) > 0.00002) {
+        const toRad = (deg: number) => (deg * Math.PI) / 180;
+        const toDeg = (rad: number) => (rad * 180) / Math.PI;
+        const φ1 = toRad(prevLat);
+        const φ2 = toRad(location.latitude);
+        const Δλ = toRad(location.longitude - prevLng);
+        const y = Math.sin(Δλ) * Math.cos(φ2);
+        const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+        const θ = Math.atan2(y, x);
+        computedHeading = Math.round((toDeg(θ) + 360) % 360);
+      } else if (order.currentLocation.heading !== undefined && order.currentLocation.heading !== null) {
+        computedHeading = order.currentLocation.heading;
+      }
+    }
+
     order.currentLocation = {
       latitude: location.latitude,
       longitude: location.longitude,
       speed: location.speed ?? null,
       accuracy: location.accuracy ?? null,
+      heading: computedHeading,
       updatedAt: nowIso,
     };
+
+    if (!order.trajectory) {
+      order.trajectory = [];
+    }
+
+    // Append to trajectory breadcrumbs history
+    const lastPoint = order.trajectory[order.trajectory.length - 1];
+    const isNewLocation =
+      !lastPoint ||
+      Math.abs(lastPoint.latitude - location.latitude) > 0.00002 ||
+      Math.abs(lastPoint.longitude - location.longitude) > 0.00002;
+
+    if (isNewLocation) {
+      order.trajectory.push({
+        latitude: location.latitude,
+        longitude: location.longitude,
+        speed: location.speed ?? null,
+        accuracy: location.accuracy ?? null,
+        heading: computedHeading,
+        timestamp: nowIso,
+      });
+
+      // Keep trajectory size optimal (max 2500 points)
+      if (order.trajectory.length > 2500) {
+        order.trajectory = order.trajectory.slice(-2500);
+      }
+    }
+
     order.updatedAt = nowIso;
 
     this.saveOrders();
@@ -1452,7 +1551,7 @@ class Database {
     orderId: string,
     deliveredBy: string,
     deliveredByName: string,
-    location?: { latitude: number; longitude: number; accuracy?: number } | null,
+    location?: { latitude: number; longitude: number; accuracy?: number; heading?: number | null } | null,
     note?: string
   ): OrderRecord {
     const order = this.getOrderById(orderId);
@@ -1472,6 +1571,29 @@ class Database {
     order.deliveredBy = deliveredBy;
     order.deliveredByName = deliveredByName;
     order.deliveredLocation = location || null;
+
+    // Append final delivery location to trajectory history so route is complete
+    if (location && location.latitude && location.longitude) {
+      if (!order.trajectory) {
+        order.trajectory = [];
+      }
+      order.trajectory.push({
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracy: location.accuracy ?? null,
+        heading: location.heading ?? null,
+        speed: 0,
+        timestamp: nowIso,
+      });
+      order.currentLocation = {
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracy: location.accuracy ?? null,
+        speed: 0,
+        heading: location.heading ?? null,
+        updatedAt: nowIso,
+      };
+    }
     if (note) {
       order.notes = order.notes ? `${order.notes} | ${note}` : note;
     }

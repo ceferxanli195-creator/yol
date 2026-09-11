@@ -18,16 +18,32 @@ export function getFirestoreDb(): Firestore | null {
   if (db) return db;
 
   try {
-    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-    if (!fs.existsSync(configPath)) {
-      console.warn('firebase-applet-config.json not found, running local-only.');
+    let config: any = null;
+    if (process.env.FIREBASE_CONFIG) {
+      try {
+        config = typeof process.env.FIREBASE_CONFIG === 'string'
+          ? JSON.parse(process.env.FIREBASE_CONFIG)
+          : process.env.FIREBASE_CONFIG;
+      } catch (e) {
+        console.warn('Could not parse FIREBASE_CONFIG env var:', e);
+      }
+    }
+
+    if (!config) {
+      const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+      if (fs.existsSync(configPath)) {
+        const raw = fs.readFileSync(configPath, 'utf-8');
+        config = JSON.parse(raw);
+      }
+    }
+
+    if (!config) {
+      console.warn('Firebase config not found (checked FIREBASE_CONFIG env and firebase-applet-config.json), running with local persistence.');
       return null;
     }
 
-    const raw = fs.readFileSync(configPath, 'utf-8');
-    const config = JSON.parse(raw);
-
-    const app = getApps().length === 0 ? initializeApp(config) : getApp();
+    const existingApps = getApps();
+    const app = (!existingApps || existingApps.length === 0) ? initializeApp(config) : getApp();
     db = getFirestore(app, config.firestoreDatabaseId);
     console.log('Server connected to Firestore database:', config.firestoreDatabaseId);
     return db;

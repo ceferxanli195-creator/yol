@@ -5,7 +5,19 @@ import { router as apiRouter } from './server/routes';
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  // Support dynamic PORT assigned by Render, Cloud Run, or local default 3000
+  const PORT = Number(process.env.PORT) || 3000;
+
+  // CORS Middleware for external deployments (e.g. Render, custom domain, mobile web)
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
 
   // Middleware for parsing JSON with support for customer photos (base64)
   app.use(express.json({ limit: '15mb' }));

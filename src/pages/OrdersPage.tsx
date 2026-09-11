@@ -293,6 +293,10 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({ onNavigate }) => {
         isOpen={!!historyOrder}
         order={historyOrder}
         onClose={() => setHistoryOrder(null)}
+        onViewTrajectory={(ord) => {
+          setHistoryOrder(null);
+          setTrackingOrder(ord);
+        }}
       />
 
       {/* Deliver Modal */}

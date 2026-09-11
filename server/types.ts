@@ -79,6 +79,15 @@ export interface OrderHistoryEvent {
   };
 }
 
+export interface TrajectoryPoint {
+  latitude: number;
+  longitude: number;
+  heading?: number | null;
+  speed?: number | null;
+  accuracy?: number | null;
+  timestamp: string;
+}
+
 export interface OrderRecord {
   id: string;
   orderNumber: number;
@@ -120,8 +129,10 @@ export interface OrderRecord {
     longitude: number;
     accuracy?: number;
     speed?: number | null;
+    heading?: number | null;
     updatedAt: string;
   } | null;
+  trajectory?: TrajectoryPoint[];
   history: OrderHistoryEvent[];
   updatedAt: string;
 }

@@ -30,18 +30,30 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers,
   });
 
-  if (response.status === 401) {
-    setStoredToken(null);
-    window.dispatchEvent(new Event('auth:unauthorized'));
-    throw new Error('Sessiyanın vaxtı bitdi. Zəhmət olmasa yenidən daxil olun.');
-  }
-
   let data: any = null;
   const contentType = response.headers.get('content-type');
   if (contentType && contentType.includes('application/json')) {
-    data = await response.json();
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
   } else {
-    data = await response.text();
+    try {
+      data = await response.text();
+    } catch {
+      data = null;
+    }
+  }
+
+  if (response.status === 401) {
+    // Only clear token and dispatch unauthorized event if NOT the login request itself
+    if (!path.includes('/auth/login')) {
+      setStoredToken(null);
+      window.dispatchEvent(new Event('auth:unauthorized'));
+    }
+    const message = (data && data.error) ? data.error : 'İstifadəçi ID və ya Şifrə yanlışdır.';
+    throw new Error(message);
   }
 
   if (!response.ok) {
@@ -350,13 +362,31 @@ export const api = {
       method: 'POST',
     }),
 
-  updateOrderLocation: (id: string, location: { latitude: number; longitude: number; speed?: number | null; accuracy?: number | null }) =>
-    request<{ success: boolean; location: any }>(`/api/orders/${id}/location`, {
+  updateOrderLocation: (
+    id: string,
+    location: {
+      latitude: number;
+      longitude: number;
+      speed?: number | null;
+      accuracy?: number | null;
+      heading?: number | null;
+    }
+  ) =>
+    request<{ success: boolean; location: any; trajectory: any }>(`/api/orders/${id}/location`, {
       method: 'POST',
       body: JSON.stringify(location),
     }),
 
-  deliverOrder: (id: string, data?: { note?: string; latitude?: number; longitude?: number; accuracy?: number }) =>
+  deliverOrder: (
+    id: string,
+    data?: {
+      note?: string;
+      latitude?: number;
+      longitude?: number;
+      accuracy?: number;
+      heading?: number | null;
+    }
+  ) =>
     request<{ order: Order; message: string }>(`/api/orders/${id}/deliver`, {
       method: 'POST',
       body: JSON.stringify(data || {}),

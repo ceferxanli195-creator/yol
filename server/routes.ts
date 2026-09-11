@@ -1801,7 +1801,7 @@ router.post('/orders/:id/start', authMiddleware, (req: AuthRequest, res) => {
 // Live Location update (Requirement 8 & 9)
 router.post('/orders/:id/location', authMiddleware, (req: AuthRequest, res) => {
   try {
-    const { latitude, longitude, speed, accuracy } = req.body;
+    const { latitude, longitude, speed, accuracy, heading } = req.body;
     if (typeof latitude !== 'number' || typeof longitude !== 'number') {
       return res.status(400).json({ error: 'GPS koordinatları tələb olunur.' });
     }
@@ -1811,9 +1811,10 @@ router.post('/orders/:id/location', authMiddleware, (req: AuthRequest, res) => {
       longitude,
       speed,
       accuracy,
+      heading,
     });
 
-    return res.json({ success: true, location: updated.currentLocation });
+    return res.json({ success: true, location: updated.currentLocation, trajectory: updated.trajectory });
   } catch (err: any) {
     return res.status(400).json({ error: err.message || 'Konum yenilənmədi.' });
   }

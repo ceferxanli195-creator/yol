@@ -56,12 +56,13 @@ export const OrderCard: React.FC<OrderCardProps> = ({
           longitude: pos.coords.longitude,
           speed: pos.coords.speed,
           accuracy: pos.coords.accuracy,
+          heading: pos.coords.heading,
         }).catch(() => {
           // ignore background GPS error
         });
       },
       () => {},
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+      { enableHighAccuracy: true, maximumAge: 4000, timeout: 10000 }
     );
 
     return () => {
@@ -333,7 +334,7 @@ export const OrderCard: React.FC<OrderCardProps> = ({
           </button>
         )}
 
-        {/* Live GPS Tracking Button for User/Admin (Requirement 9) */}
+        {/* Live GPS Tracking Button for in_transit/assigned orders */}
         {(order.status === 'in_transit' || order.status === 'assigned') && (
           <button
             type="button"
@@ -343,6 +344,19 @@ export const OrderCard: React.FC<OrderCardProps> = ({
           >
             <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping"></span>
             <span>Canlı konuma bax</span>
+          </button>
+        )}
+
+        {/* Trajectory History Map Button for completed / delivered orders */}
+        {order.status === 'delivered' && (
+          <button
+            type="button"
+            onClick={() => onViewLiveTracking(order)}
+            className="py-2 px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            title="Keçilən traektoriya və marşrut tarixçəsinə bax"
+          >
+            <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Traektoriya tarixçəsi</span>
           </button>
         )}
 

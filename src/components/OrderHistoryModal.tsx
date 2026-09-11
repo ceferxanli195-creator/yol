@@ -1,14 +1,20 @@
 import React from 'react';
-import { X, CheckCircle2, Clock, Truck, UserCheck, MapPin, Calendar, FileText } from 'lucide-react';
+import { X, CheckCircle2, Clock, Truck, UserCheck, MapPin, Calendar, FileText, Route } from 'lucide-react';
 import { Order, OrderHistoryEvent } from '../types';
 
 interface OrderHistoryModalProps {
   isOpen: boolean;
   order: Order | null;
   onClose: () => void;
+  onViewTrajectory?: (order: Order) => void;
 }
 
-export const OrderHistoryModal: React.FC<OrderHistoryModalProps> = ({ isOpen, order, onClose }) => {
+export const OrderHistoryModal: React.FC<OrderHistoryModalProps> = ({
+  isOpen,
+  order,
+  onClose,
+  onViewTrajectory,
+}) => {
   if (!isOpen || !order) return null;
 
   const getStepIcon = (step: OrderHistoryEvent['step']) => {
@@ -130,8 +136,21 @@ export const OrderHistoryModal: React.FC<OrderHistoryModalProps> = ({ isOpen, or
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+        <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+          {onViewTrajectory ? (
+            <button
+              id="btn-history-view-trajectory"
+              type="button"
+              onClick={() => onViewTrajectory(order)}
+              className="px-4 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 text-xs font-bold flex items-center gap-1.5 transition-colors"
+            >
+              <Route className="w-4 h-4 text-sky-600" />
+              <span>Marşrut və Traektoriya Xəritəsi</span>
+            </button>
+          ) : <div />}
+
           <button
+            id="btn-history-close"
             type="button"
             onClick={onClose}
             className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium text-xs"
